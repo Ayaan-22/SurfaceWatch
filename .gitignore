@@ -1,0 +1,61 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# Python virtual environment
+.venv/
+venv/
+ENV/
+env/
+
+# Python cache & build files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Database files
+*.db
+*.db-journal
+*.sqlite3
+
+# Node / Frontend
+node_modules/
+.next/
+out/
+.svelte-kit/
+.eslintcache
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Project-specific generated directories
+reports/
+generated_reports/
+backend/generated_reports/
+
+# IDE files
+.vscode/
+.idea/
+
+.agents/
+
+SurfaceWatch Project Plan.pdf
