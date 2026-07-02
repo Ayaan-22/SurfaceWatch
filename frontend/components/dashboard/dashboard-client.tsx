@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Clock, Radar } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, Check, ChevronDown, Clock, Radar } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -15,26 +15,50 @@ export function DashboardClient() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const projectMenuRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     async function load() {
       const projectRows = await apiFetch<Project[]>("/projects");
       setProjects(projectRows);
-      if (projectRows[0]) {
-        setSummary(await apiFetch<DashboardSummary>(`/projects/${projectRows[0].id}/dashboard`));
+      if (projectRows.length > 0) {
+        const idToLoad = selectedProjectId || projectRows[0].id;
+        if (!selectedProjectId) {
+          setSelectedProjectId(idToLoad);
+        }
+        setSummary(await apiFetch<DashboardSummary>(`/projects/${idToLoad}/dashboard`));
       }
     }
     load()
       .catch((err) => setError(err instanceof Error ? err.message : "Could not load dashboard."))
       .finally(() => setLoading(false));
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    function closeOnOutsideClick(event: MouseEvent) {
+      if (!projectMenuRef.current?.contains(event.target as Node)) {
+        setProjectMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
   }, []);
+
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === selectedProjectId) ?? projects[0],
+    [projects, selectedProjectId],
+  );
 
   const metrics = useMemo(() => {
     if (!summary) return [];
+    const projectId = summary.project.id;
     return [
-      { label: "Total assets", value: String(summary.total_assets), delta: `${summary.active_subdomains} active` },
-      { label: "Open ports", value: String(summary.open_ports), delta: "limited safe checks" },
-      { label: "Critical/high", value: String(summary.critical_high_findings), delta: "open findings" },
-      { label: "Missing headers", value: String(summary.missing_security_headers), delta: "security controls" }
+      { label: "Total assets", value: String(summary.total_assets), delta: `${summary.active_subdomains} active`, href: `/projects/${projectId}/assets` },
+      { label: "Open ports", value: String(summary.open_ports), delta: "limited safe checks", href: `/projects/${projectId}/assets` },
+      { label: "Critical/high", value: String(summary.critical_high_findings), delta: "open findings", href: `/projects/${projectId}/findings` },
+      { label: "Missing headers", value: String(summary.missing_security_headers), delta: "security controls", href: `/projects/${projectId}/findings` }
     ];
   }, [summary]);
 
@@ -55,7 +79,41 @@ export function DashboardClient() {
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-sm text-slate-400">Dashboard</p>
-          <h1 className="text-3xl font-semibold text-white">{summary.project.company_name}</h1>
+          <div ref={projectMenuRef} className="relative mt-1 w-full min-w-[240px] max-w-[360px]">
+            <button
+              type="button"
+              onClick={() => setProjectMenuOpen((open) => !open)}
+              className="flex h-12 w-full items-center justify-between gap-3 rounded-md border border-cyan-300/40 bg-surface-950 px-4 text-left text-2xl font-semibold text-white transition hover:border-cyan-200/70 focus:border-cyan-200 focus:outline-none focus:ring-2 focus:ring-cyan-300/30"
+              aria-haspopup="listbox"
+              aria-expanded={projectMenuOpen}
+            >
+              <span className="truncate">{selectedProject?.company_name ?? "Select project"}</span>
+              <ChevronDown className="h-5 w-5 shrink-0 text-slate-300" />
+            </button>
+            {projectMenuOpen ? (
+              <div className="absolute left-0 top-[calc(100%+6px)] z-20 w-full overflow-hidden rounded-md border border-white/10 bg-surface-950 shadow-2xl shadow-black/40" role="listbox">
+                {projects.map((project) => {
+                  const selected = project.id === selectedProjectId;
+                  return (
+                    <button
+                      key={project.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedProjectId(project.id);
+                        setProjectMenuOpen(false);
+                      }}
+                      className="flex h-11 w-full items-center justify-between gap-3 px-4 text-left text-sm font-medium text-slate-100 transition hover:bg-cyan-300/10 hover:text-white focus:bg-cyan-300/10 focus:outline-none"
+                      role="option"
+                      aria-selected={selected}
+                    >
+                      <span className="truncate">{project.company_name}</span>
+                      {selected ? <Check className="h-4 w-4 text-cyan-200" /> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
         </div>
         <Badge tone={summary.project.risk_level}>{summary.project.risk_level} risk</Badge>
       </div>

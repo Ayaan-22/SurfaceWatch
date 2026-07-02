@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from html.parser import HTMLParser
 
@@ -174,17 +176,42 @@ def _ordered_hostnames(hostnames: set[str], domain: str, max_candidates: int) ->
     return [domain, *ordered][:max_candidates]
 
 
-def passive_seed_discovery(domain: str, timeout_seconds: float = 5.0, max_candidates: int = 250) -> list[SubdomainCandidate]:
+def _passive_source_hostnames(domain: str, timeout_seconds: float) -> tuple[set[str], set[str], set[str], set[str]]:
+    sources = (
+        _certificate_transparency_hostnames,
+        _certspotter_hostnames,
+        _hackertarget_hostnames,
+        _rapiddns_hostnames,
+    )
+    pool = ThreadPoolExecutor(max_workers=len(sources), thread_name_prefix="subdomain-source")
+    try:
+        futures = [pool.submit(source, domain, timeout_seconds) for source in sources]
+        results: list[set[str]] = []
+        for future in futures:
+            try:
+                results.append(future.result(timeout=timeout_seconds + 1))
+            except Exception:
+                future.cancel()
+                results.append(set())
+        return results[0], results[1], results[2], results[3]
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def iter_passive_seed_discovery(
+    domain: str,
+    timeout_seconds: float = 5.0,
+    max_candidates: int = 250,
+) -> Iterator[SubdomainCandidate]:
     normalized_domain = domain.strip().lower().rstrip(".")
     seed_hostnames = _seed_hostnames(normalized_domain)
-    crtsh_hostnames = _certificate_transparency_hostnames(normalized_domain, timeout_seconds)
-    certspotter_hostnames = _certspotter_hostnames(normalized_domain, timeout_seconds)
-    hackertarget_hostnames = _hackertarget_hostnames(normalized_domain, timeout_seconds)
-    rapiddns_hostnames = _rapiddns_hostnames(normalized_domain, timeout_seconds)
+    crtsh_hostnames, certspotter_hostnames, hackertarget_hostnames, rapiddns_hostnames = _passive_source_hostnames(
+        normalized_domain,
+        timeout_seconds,
+    )
     certificate_hostnames = crtsh_hostnames | certspotter_hostnames
     external_hostnames = certificate_hostnames | hackertarget_hostnames | rapiddns_hostnames
     candidates = _ordered_hostnames(seed_hostnames | external_hostnames, normalized_domain, max_candidates)
-    discovered: list[SubdomainCandidate] = []
     for hostname in candidates:
         ips = resolve_host(hostname)
         if hostname in certificate_hostnames:
@@ -195,12 +222,13 @@ def passive_seed_discovery(domain: str, timeout_seconds: float = 5.0, max_candid
             source = "rapiddns"
         else:
             source = "passive_seed_dns"
-        discovered.append(
-            SubdomainCandidate(
-                hostname=hostname,
-                ip_addresses=ips,
-                source=source,
-                status="active" if ips else "unknown",
-            )
+        yield SubdomainCandidate(
+            hostname=hostname,
+            ip_addresses=ips,
+            source=source,
+            status="active" if ips else "unknown",
         )
-    return discovered
+
+
+def passive_seed_discovery(domain: str, timeout_seconds: float = 5.0, max_candidates: int = 250) -> list[SubdomainCandidate]:
+    return list(iter_passive_seed_discovery(domain, timeout_seconds, max_candidates))

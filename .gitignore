@@ -48,7 +48,7 @@ pnpm-debug.log*
 Thumbs.db
 
 # Project-specific generated directories
-reports/
+#reports/
 generated_reports/
 backend/generated_reports/
 

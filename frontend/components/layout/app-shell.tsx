@@ -1,18 +1,48 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Bell, FileText, FolderKanban, LayoutDashboard, Radar, Settings, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { AuthGate, LogoutButton } from "@/components/auth/auth-gate";
 import { WorkspaceTitle } from "@/components/layout/workspace-title";
 import { Button } from "@/components/ui/button";
+import { apiFetch, type Project } from "@/lib/api";
 
-const nav = [
-  { key: "dashboard", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { key: "projects", label: "Projects", href: "/projects", icon: FolderKanban },
-  { key: "reports", label: "Reports", href: "/projects", icon: FileText },
-  { key: "notifications", label: "Notifications", href: "/notifications", icon: Bell },
-  { key: "settings", label: "Settings", href: "/settings", icon: Settings }
-];
+const PROJECT_PATH_PATTERN = /^\/projects\/([^/]+)/;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const [firstProjectId, setFirstProjectId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const match = PROJECT_PATH_PATTERN.exec(pathname);
+    if (!match?.[1]) {
+      apiFetch<Project[]>("/projects")
+        .then((projects) => {
+          if (projects && projects[0]) {
+            setFirstProjectId(projects[0].id);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [pathname]);
+
+  const match = PROJECT_PATH_PATTERN.exec(pathname);
+  const currentProjectId = match?.[1] || firstProjectId;
+
+  const reportsHref = currentProjectId && currentProjectId !== "new"
+    ? `/projects/${currentProjectId}/reports`
+    : "/projects";
+
+  const nav = [
+    { key: "dashboard", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+    { key: "projects", label: "Projects", href: "/projects", icon: FolderKanban },
+    { key: "reports", label: "Reports", href: reportsHref, icon: FileText },
+    { key: "notifications", label: "Notifications", href: "/notifications", icon: Bell },
+    { key: "settings", label: "Settings", href: "/settings", icon: Settings }
+  ];
+
   return (
     <AuthGate>
     <div className="min-h-screen bg-surface-950 text-slate-100">

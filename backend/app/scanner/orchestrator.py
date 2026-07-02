@@ -1,3 +1,7 @@
+import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -9,8 +13,29 @@ from app.scanner.http_probe import probe_http
 from app.scanner.ports import check_tcp_port
 from app.scanner.risk_engine import calculate_risk_score
 from app.scanner.ssl_checker import check_ssl
-from app.scanner.subdomains import passive_seed_discovery
+from app.scanner.subdomains import iter_passive_seed_discovery
 from app.scanner.tech_fingerprint import detect_technologies
+
+logger = logging.getLogger(__name__)
+
+# Thread pool for running per-asset work with a hard timeout
+_ASSET_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="asset-scan")
+
+ASSET_TIMEOUT_SECONDS = 30  # Max time for a single asset (HTTP + SSL + ports)
+
+
+class _ScanCancelled(Exception):
+    """Raised when a scan is cancelled or times out globally."""
+
+
+def _check_scan_health(db: Session, scan: Scan, start_time: float, max_duration: int) -> None:
+    """Re-read scan status from DB and enforce global timeout."""
+    db.refresh(scan)
+    if scan.status == "cancelled":
+        raise _ScanCancelled("Scan was cancelled by the user.")
+    elapsed = time.monotonic() - start_time
+    if elapsed > max_duration:
+        raise _ScanCancelled(f"Scan exceeded maximum duration of {max_duration}s.")
 
 
 RISKY_PORTS = {
@@ -28,6 +53,40 @@ RISKY_PORTS = {
 def _log(db: Session, scan: Scan, level: str, message: str) -> None:
     db.add(ScanLog(scan_id=scan.id, level=level, message=message))
     db.flush()
+
+
+def _upsert_scan_stop_notification(db: Session, project: Project, scan: Scan, title: str, message: str, notification_type: str) -> None:
+    notification = None
+    for existing in db.scalars(
+        select(Notification).where(
+            Notification.user_id == project.owner_id,
+            Notification.project_id == project.id,
+            Notification.notification_type.in_(["scan_completed", "scan_cancelled"]),
+        )
+    ):
+        metadata = existing.metadata_json or {}
+        if isinstance(metadata, dict) and metadata.get("scan_id") == scan.id:
+            notification = existing
+            break
+
+    if notification is None:
+        db.add(
+            Notification(
+                user_id=project.owner_id,
+                project_id=project.id,
+                title=title,
+                message=message,
+                notification_type=notification_type,
+                metadata_json={"scan_id": scan.id, "risk_score": scan.risk_score},
+            )
+        )
+        return
+
+    notification.title = title
+    notification.message = message
+    notification.notification_type = notification_type
+    notification.metadata_json = {"scan_id": scan.id, "risk_score": scan.risk_score}
+    notification.is_read = False
 
 
 def _asset_risk_level(severities: list[str]) -> str:
@@ -160,6 +219,16 @@ def _upsert_technology(db: Session, project: Project, scan: Scan, asset: Asset, 
     technology.last_seen_at = now
 
 
+def _scan_asset_network(hostname: str, settings) -> tuple:
+    """Run all network I/O for a single asset. Executed in a thread so we can enforce a hard timeout."""
+    http_results = probe_http(hostname, settings.scan_timeout_seconds)
+    ssl_result = check_ssl(hostname, settings.scan_timeout_seconds)
+    port_results = []
+    for port_number in settings.default_ports:
+        port_results.append(check_tcp_port(hostname, port_number, min(settings.scan_timeout_seconds, 1.5)))
+    return http_results, ssl_result, port_results
+
+
 def run_project_scan(scan_id: str, db: Session) -> None:
     settings = get_settings()
     scan = db.get(Scan, scan_id)
@@ -171,6 +240,8 @@ def run_project_scan(scan_id: str, db: Session) -> None:
         scan.error_message = "Project not found."
         db.commit()
         return
+    if scan.status == "cancelled":
+        return
 
     now = utc_now()
     scan.status = "running"
@@ -178,15 +249,20 @@ def run_project_scan(scan_id: str, db: Session) -> None:
     _log(db, scan, "info", f"Starting safe scan for {project.main_domain}.")
     db.commit()
 
+    start_time = time.monotonic()
+    max_duration = settings.max_scan_duration_seconds
     severities: list[str] = []
     assets_scanned = 0
     seen_asset_ids: set[str] = set()
+
     try:
-        for candidate in passive_seed_discovery(
+        for candidate in iter_passive_seed_discovery(
             project.main_domain,
             settings.discovery_timeout_seconds,
             settings.max_discovered_assets,
         ):
+            _check_scan_health(db, scan, start_time, max_duration)
+
             now = utc_now()
             asset = db.scalar(select(Asset).where(Asset.project_id == project.id, Asset.hostname == candidate.hostname))
             if asset is None:
@@ -224,8 +300,41 @@ def run_project_scan(scan_id: str, db: Session) -> None:
             asset_severities: list[str] = []
             assets_scanned += 1
             _log(db, scan, "info", f"Discovered {candidate.hostname} with status {candidate.status}.")
+            running_score, _, _ = calculate_risk_score(severities)
+            scan.assets_scanned = assets_scanned
+            scan.findings_created = len(severities)
+            scan.risk_score = running_score
+            db.commit()
 
-            http_results = probe_http(candidate.hostname, settings.scan_timeout_seconds)
+            try:
+                future = _ASSET_POOL.submit(_scan_asset_network, candidate.hostname, settings)
+                http_results, ssl_result, port_results = future.result(timeout=ASSET_TIMEOUT_SECONDS)
+                _check_scan_health(db, scan, start_time, max_duration)
+            except FuturesTimeoutError:
+                logger.warning("Asset %s timed out after %ds, skipping deep scan.", candidate.hostname, ASSET_TIMEOUT_SECONDS)
+                _log(db, scan, "warning", f"Asset {candidate.hostname} timed out after {ASSET_TIMEOUT_SECONDS}s, skipping.")
+                future.cancel()
+                _check_scan_health(db, scan, start_time, max_duration)
+                asset.risk_level = "unknown"
+                running_score, _, _ = calculate_risk_score(severities)
+                scan.assets_scanned = assets_scanned
+                scan.findings_created = len(severities)
+                scan.risk_score = running_score
+                db.commit()
+                continue
+            except _ScanCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("Asset %s network scan failed: %s", candidate.hostname, exc)
+                _log(db, scan, "warning", f"Asset {candidate.hostname} scan error: {exc}")
+                asset.risk_level = "unknown"
+                running_score, _, _ = calculate_risk_score(severities)
+                scan.assets_scanned = assets_scanned
+                scan.findings_created = len(severities)
+                scan.risk_score = running_score
+                db.commit()
+                continue
+
             best_http = next((result for result in http_results if result.status_code), None)
             if best_http:
                 for header_result in analyze_headers(best_http.headers):
@@ -276,7 +385,6 @@ def run_project_scan(scan_id: str, db: Session) -> None:
                 for signal in detect_technologies(best_http.headers, best_http.body_preview):
                     _upsert_technology(db, project, scan, asset, signal, now)
 
-            ssl_result = check_ssl(candidate.hostname, settings.scan_timeout_seconds)
             db.add(
                 SslResult(
                     project_id=project.id,
@@ -325,8 +433,7 @@ def run_project_scan(scan_id: str, db: Session) -> None:
                     "Renew and deploy the certificate before expiry.",
                 )
 
-            for port_number in settings.default_ports:
-                port_result = check_tcp_port(candidate.hostname, port_number, min(settings.scan_timeout_seconds, 1.5))
+            for port_result in port_results:
                 old_status = _upsert_port(db, project, scan, asset, port_result, now)
                 if old_status == "open" and port_result.status != "open":
                     db.add(
@@ -373,7 +480,15 @@ def run_project_scan(scan_id: str, db: Session) -> None:
 
             asset.risk_level = _asset_risk_level(asset_severities)
             severities.extend(asset_severities)
+
+            running_score, _, _ = calculate_risk_score(severities)
+            scan.assets_scanned = assets_scanned
+            scan.findings_created = len(severities)
+            scan.risk_score = running_score
+
             db.commit()
+
+        _check_scan_health(db, scan, start_time, max_duration)
 
         for stale_asset in db.scalars(select(Asset).where(Asset.project_id == project.id, Asset.status == "active")):
             if stale_asset.id not in seen_asset_ids and stale_asset.last_seen_at < scan.started_at:
@@ -424,6 +539,32 @@ def run_project_scan(scan_id: str, db: Session) -> None:
                 )
             )
         db.commit()
+
+    except _ScanCancelled as cancel_exc:
+        score, level, _ = calculate_risk_score(severities)
+        db.refresh(scan)
+        was_user_cancel = scan.status == "cancelled"
+        scan.status = "cancelled" if was_user_cancel else "completed"
+        scan.finished_at = utc_now()
+        scan.assets_scanned = assets_scanned
+        scan.findings_created = len(severities)
+        scan.risk_score = score
+        project.risk_score = score
+        project.risk_level = level
+        project.risk_status = "attention_required" if score > 50 else "monitored"
+        project.last_scan_at = scan.finished_at
+        reason = "cancelled by user" if was_user_cancel else str(cancel_exc)
+        _log(db, scan, "info", f"Scan stopped early ({reason}). Processed {assets_scanned} assets.")
+        _upsert_scan_stop_notification(
+            db,
+            project,
+            scan,
+            "Scan cancelled" if was_user_cancel else "Scan completed (partial)",
+            f"{project.company_name} scan {reason}. Risk score: {score}.",
+            "scan_cancelled" if was_user_cancel else "scan_completed",
+        )
+        db.commit()
+
     except Exception as exc:
         scan.status = "failed"
         scan.finished_at = utc_now()

@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Play, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import Link from "next/link";
 import { apiFetch, type Project, type Scan } from "@/lib/api";
 
 export function ProjectOverviewClient({ projectId }: { projectId: string }) {
@@ -13,6 +14,9 @@ export function ProjectOverviewClient({ projectId }: { projectId: string }) {
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const scansRef = useRef<Scan[]>([]);
+  scansRef.current = scans;
 
   async function loadProject() {
     const [projectData, scanData] = await Promise.all([
@@ -24,9 +28,31 @@ export function ProjectOverviewClient({ projectId }: { projectId: string }) {
   }
 
   useEffect(() => {
-    loadProject()
-      .catch((err) => setError(err instanceof Error ? err.message : "Could not load project."))
-      .finally(() => setLoading(false));
+    let active = true;
+    async function load() {
+      try {
+        await loadProject();
+        if (active) setError(null);
+      } catch (err) {
+        if (active) setError(err instanceof Error ? err.message : "Could not load project.");
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    load();
+
+    const intervalId = setInterval(() => {
+      const currentScans = scansRef.current;
+      const anyRunning = currentScans.some((s) => s.status === "running" || s.status === "queued");
+      if (!anyRunning && currentScans.length > 0) return;
+      load();
+    }, 3000);
+
+    return () => {
+      active = false;
+      clearInterval(intervalId);
+    };
   }, [projectId]);
 
   async function startScan() {
@@ -35,9 +61,6 @@ export function ProjectOverviewClient({ projectId }: { projectId: string }) {
     try {
       const scan = await apiFetch<Scan>(`/projects/${projectId}/scans`, { method: "POST" });
       setScans((current) => [scan, ...current]);
-      window.setTimeout(() => {
-        loadProject().catch(() => undefined);
-      }, 2500);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start scan.");
     } finally {
@@ -96,7 +119,11 @@ export function ProjectOverviewClient({ projectId }: { projectId: string }) {
           {scans.slice(0, 4).map((scan) => (
             <div key={scan.id} className="flex items-center justify-between rounded-lg border border-white/10 bg-surface-950 p-4">
               <div>
-                <p className="font-medium text-white">{scan.id}</p>
+                <p className="font-medium text-white">
+                  <Link href={`/scans/${scan.id}`} className="text-cyan-100 hover:text-cyan-200">
+                    {scan.id}
+                  </Link>
+                </p>
                 <p className="text-sm text-slate-400">{scan.started_at ? new Date(scan.started_at).toLocaleString() : "Queued"}</p>
               </div>
               <div className="text-right">

@@ -29,6 +29,7 @@ class Settings(BaseModel):
     discovery_timeout_seconds: float = 10.0
     scan_concurrency: int = 5
     max_discovered_assets: int = 250
+    max_scan_duration_seconds: int = 600
     default_ports: list[int] = [
         80,
         443,
@@ -88,5 +89,6 @@ def get_settings() -> Settings:
         discovery_timeout_seconds=float(os.getenv("DISCOVERY_TIMEOUT_SECONDS", "10.0")),
         scan_concurrency=int(os.getenv("SCAN_CONCURRENCY", "5")),
         max_discovered_assets=int(os.getenv("MAX_DISCOVERED_ASSETS", "250")),
+        max_scan_duration_seconds=int(os.getenv("MAX_SCAN_DURATION_SECONDS", "600")),
         default_ports=default_ports,
     )
