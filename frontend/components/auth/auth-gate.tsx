@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { PageLoader } from "@/components/ui/page-loader";
 import { clearToken, getToken } from "@/lib/api";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
@@ -18,7 +19,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   }, [pathname, router]);
 
   if (!ready) {
-    return <div className="p-8 text-slate-400">Checking session...</div>;
+    return (
+      <main className="min-h-screen bg-surface-950 p-6 text-slate-100">
+        <PageLoader title="Checking session" detail="Verifying access before opening the workspace." />
+      </main>
+    );
   }
   return children;
 }

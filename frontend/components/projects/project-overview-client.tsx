@@ -1,36 +1,42 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Play, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Play, RefreshCw, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { PageLoader } from "@/components/ui/page-loader";
 import Link from "next/link";
-import { apiFetch, type Project, type Scan } from "@/lib/api";
+import { apiFetch, formatApiDate, formatApiDateTime, parseApiDate, type Project, type Scan } from "@/lib/api";
 
 export function ProjectOverviewClient({ projectId }: { projectId: string }) {
   const [project, setProject] = useState<Project | null>(null);
   const [scans, setScans] = useState<Scan[]>([]);
   const [loading, setLoading] = useState(true);
-  const [scanning, setScanning] = useState(false);
+  const [scanning, setScanning] = useState<"safe" | "aggressive" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(0);
 
   const scansRef = useRef<Scan[]>([]);
-  scansRef.current = scans;
 
-  async function loadProject() {
+  useEffect(() => {
+    scansRef.current = scans;
+  }, [scans]);
+
+  const loadProject = useCallback(async () => {
     const [projectData, scanData] = await Promise.all([
       apiFetch<Project>(`/projects/${projectId}`),
       apiFetch<Scan[]>(`/projects/${projectId}/scans`)
     ]);
     setProject(projectData);
     setScans(scanData);
-  }
+  }, [projectId]);
 
   useEffect(() => {
     let active = true;
     async function load() {
       try {
+        setNowMs(Date.now());
         await loadProject();
         if (active) setError(null);
       } catch (err) {
@@ -53,26 +59,33 @@ export function ProjectOverviewClient({ projectId }: { projectId: string }) {
       active = false;
       clearInterval(intervalId);
     };
-  }, [projectId]);
+  }, [loadProject]);
 
-  async function startScan() {
+  async function startScan(scanProfile: "safe" | "aggressive") {
     setError(null);
-    setScanning(true);
+    setScanning(scanProfile);
     try {
-      const scan = await apiFetch<Scan>(`/projects/${projectId}/scans`, { method: "POST" });
+      const scan = await apiFetch<Scan>(`/projects/${projectId}/scans`, {
+        method: "POST",
+        body: JSON.stringify({ scan_profile: scanProfile })
+      });
       setScans((current) => [scan, ...current]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start scan.");
     } finally {
-      setScanning(false);
+      setScanning(null);
     }
   }
 
   const latestScan = useMemo(() => scans[0], [scans]);
 
-  if (loading) return <Card><p className="text-slate-400">Loading project...</p></Card>;
+  if (loading) return <PageLoader title="Loading project" detail="Preparing scope details, authorization, and recent scans." />;
   if (error && !project) return <Card><p className="text-red-100">{error}</p><Button href="/login" className="mt-4" variant="secondary">Login</Button></Card>;
   if (!project) return null;
+
+  const authorizationExpired = project.authorization_expires_at ? parseApiDate(project.authorization_expires_at).getTime() <= nowMs : true;
+  const canRunAggressive = project.max_scan_profile === "aggressive" && !authorizationExpired;
+  const canRunSafe = !authorizationExpired;
 
   return (
     <div className="space-y-5">
@@ -85,9 +98,13 @@ export function ProjectOverviewClient({ projectId }: { projectId: string }) {
         <div className="flex flex-wrap gap-3">
           <Button href={`/projects/${project.id}/assets`} variant="secondary">Assets</Button>
           <Button href={`/projects/${project.id}/findings`} variant="secondary">Findings</Button>
-          <button disabled={scanning} onClick={startScan} className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-cyan-300 px-4 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-60">
-            {scanning ? <RefreshCw className="animate-spin" size={17} /> : <Play size={17} />}
-            {scanning ? "Queueing..." : "Run safe scan"}
+          <button disabled={scanning !== null || !canRunSafe} onClick={() => startScan("safe")} className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-cyan-300 px-4 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-60">
+            {scanning === "safe" ? <RefreshCw className="animate-spin" size={17} /> : <Play size={17} />}
+            {scanning === "safe" ? "Queueing..." : "Run safe scan"}
+          </button>
+          <button disabled={scanning !== null || !canRunAggressive} onClick={() => startScan("aggressive")} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-red-300/50 bg-red-500/15 px-4 text-sm font-semibold text-red-100 transition hover:bg-red-500/25 disabled:cursor-not-allowed disabled:opacity-60">
+            {scanning === "aggressive" ? <RefreshCw className="animate-spin" size={17} /> : <ShieldAlert size={17} />}
+            {scanning === "aggressive" ? "Queueing..." : "Run aggressive scan"}
           </button>
         </div>
       </div>
@@ -103,13 +120,30 @@ export function ProjectOverviewClient({ projectId }: { projectId: string }) {
         </Card>
         <Card>
           <p className="text-sm text-slate-400">Last scan</p>
-          <p className="mt-3 text-lg font-semibold text-white">{project.last_scan_at ? new Date(project.last_scan_at).toLocaleString() : "Not scanned"}</p>
+          <p className="mt-3 text-lg font-semibold text-white">{project.last_scan_at ? formatApiDateTime(project.last_scan_at) : "Not scanned"}</p>
         </Card>
         <Card>
           <p className="text-sm text-slate-400">Latest status</p>
           <p className="mt-3 text-lg font-semibold capitalize text-white">{latestScan?.status ?? "ready"}</p>
         </Card>
       </div>
+      <Card>
+        <div className="grid gap-4 md:grid-cols-3">
+          <div>
+            <p className="text-sm text-slate-400">Authorization contact</p>
+            <p className="mt-2 font-medium text-white">{project.authorization_contact ?? "Not recorded"}</p>
+          </div>
+          <div>
+            <p className="text-sm text-slate-400">Authorization expiry</p>
+            <p className="mt-2 font-medium text-white">{project.authorization_expires_at ? formatApiDate(project.authorization_expires_at) : "Missing"}</p>
+          </div>
+          <div>
+            <p className="text-sm text-slate-400">Approved scan profile</p>
+            <p className="mt-2 font-medium capitalize text-white">{project.max_scan_profile}</p>
+          </div>
+        </div>
+        {authorizationExpired ? <p className="mt-4 rounded-md border border-amber-300/30 bg-amber-400/10 p-3 text-sm text-amber-100">Authorization is expired or missing. Renew the scope before starting new scans.</p> : null}
+      </Card>
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">Recent scans</h2>
@@ -124,15 +158,15 @@ export function ProjectOverviewClient({ projectId }: { projectId: string }) {
                     {scan.id}
                   </Link>
                 </p>
-                <p className="text-sm text-slate-400">{scan.started_at ? new Date(scan.started_at).toLocaleString() : "Queued"}</p>
+                <p className="text-sm text-slate-400">{scan.started_at ? formatApiDateTime(scan.started_at) : "Queued"} · {scan.scan_profile}</p>
               </div>
               <div className="text-right">
                 <Badge tone={scan.status === "failed" ? "high" : "low"}>{scan.status}</Badge>
-                <p className="mt-2 text-xs text-slate-500">Risk {scan.risk_score}</p>
+                <p className="mt-2 text-xs text-slate-500">Scan risk {scan.risk_score}</p>
               </div>
             </div>
           ))}
-          {!scans.length ? <p className="text-slate-400">No scans yet. Run a safe scan to populate assets and findings.</p> : null}
+          {!scans.length ? <p className="text-slate-400">No scans yet. Run a safe or aggressive scan to populate assets and findings.</p> : null}
         </div>
       </Card>
     </div>

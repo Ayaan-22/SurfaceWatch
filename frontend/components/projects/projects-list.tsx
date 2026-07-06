@@ -6,6 +6,7 @@ import { Activity, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { PageLoader } from "@/components/ui/page-loader";
 import { apiFetch, type Project } from "@/lib/api";
 
 export function ProjectsList() {
@@ -21,7 +22,7 @@ export function ProjectsList() {
   }, []);
 
   if (loading) {
-    return <Card><p className="text-slate-400">Loading projects...</p></Card>;
+    return <PageLoader title="Loading projects" detail="Collecting authorized scopes and risk summaries." />;
   }
 
   if (error) {

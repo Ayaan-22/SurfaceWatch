@@ -5,9 +5,19 @@ import { AlertTriangle, Check, ChevronDown, Clock, Radar } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { PageLoader } from "@/components/ui/page-loader";
 import { StatCard } from "@/components/dashboard/stat-card";
-import { RiskTrendChart, SeverityChart } from "@/components/dashboard/charts";
-import { apiFetch, type DashboardSummary, type Project } from "@/lib/api";
+import { RiskTrendChart, SeverityChart, type RiskTrendPoint, type SeverityPoint } from "@/components/dashboard/charts";
+import { apiFetch, formatApiDate, formatApiDateTime, type DashboardSummary, type Project } from "@/lib/api";
+
+const severityOrder = ["critical", "high", "medium", "low", "info"];
+const severityLabels: Record<string, string> = {
+  critical: "Critical",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+  info: "Info"
+};
 
 export function DashboardClient() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -62,7 +72,30 @@ export function DashboardClient() {
     ];
   }, [summary]);
 
-  if (loading) return <Card><p className="text-slate-400">Loading dashboard...</p></Card>;
+  const riskTrendData = useMemo<RiskTrendPoint[]>(() => {
+    if (!summary) return [];
+    const scansWithScores = summary.recent_scans
+      .filter((scan) => scan.started_at)
+      .slice()
+      .sort((a, b) => new Date(a.started_at ?? "").getTime() - new Date(b.started_at ?? "").getTime())
+      .map((scan) => ({
+        date: formatApiDate(scan.started_at ?? ""),
+        score: scan.risk_score
+      }));
+
+    if (scansWithScores.length) return scansWithScores;
+    return [{ date: "Current", score: summary.project.risk_score }];
+  }, [summary]);
+
+  const severityData = useMemo<SeverityPoint[]>(() => {
+    if (!summary) return [];
+    return severityOrder.map((severity) => ({
+      name: severityLabels[severity],
+      value: summary.severity_counts[severity] ?? summary.severity_counts[severityLabels[severity]] ?? 0
+    }));
+  }, [summary]);
+
+  if (loading) return <PageLoader title="Loading dashboard" detail="Fetching project metrics, scan history, and finding severity." />;
   if (error) return <Card><p className="text-red-100">{error}</p></Card>;
   if (!summary) {
     return (
@@ -124,13 +157,13 @@ export function DashboardClient() {
         <Card>
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-white">Risk trend</h2>
-            <span className="text-sm text-slate-400">Demo trend until more scans exist</span>
+            <span className="text-sm text-slate-400">{summary.recent_scans.length ? "Recent scan scores" : "Current project score"}</span>
           </div>
-          <RiskTrendChart />
+          <RiskTrendChart data={riskTrendData} />
         </Card>
         <Card>
           <h2 className="mb-4 text-lg font-semibold text-white">Finding severity</h2>
-          <SeverityChart />
+          <SeverityChart data={severityData} />
         </Card>
       </div>
       <div className="mt-5 grid gap-5 xl:grid-cols-2">
@@ -156,11 +189,11 @@ export function DashboardClient() {
               <div key={scan.id} className="flex items-center justify-between rounded-lg border border-white/10 bg-surface-950 p-4">
                 <div>
                   <p className="font-medium text-white">{scan.id}</p>
-                  <p className="text-sm text-slate-400">{scan.started_at ? new Date(scan.started_at).toLocaleString() : "Queued"}</p>
+                  <p className="text-sm text-slate-400">{scan.started_at ? formatApiDateTime(scan.started_at) : "Queued"}</p>
                 </div>
                 <div className="text-right">
                   <Badge tone={scan.status === "failed" ? "high" : "low"}>{scan.status}</Badge>
-                  <p className="mt-2 text-xs text-slate-500">Risk {scan.risk_score}</p>
+                  <p className="mt-2 text-xs text-slate-500">Scan risk {scan.risk_score}</p>
                 </div>
               </div>
             ))}

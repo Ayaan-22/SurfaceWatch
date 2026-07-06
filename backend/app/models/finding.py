@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, JSON, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -17,6 +17,12 @@ class Finding(UUIDMixin, TimestampMixin, Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     severity: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     category: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
+    confidence: Mapped[str] = mapped_column(String(32), default="medium", nullable=False)
+    cvss_score: Mapped[float | None] = mapped_column(Float)
+    evidence_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    sla_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    owner: Mapped[str | None] = mapped_column(String(255))
     evidence: Mapped[dict | list | str | None] = mapped_column(JSON)
     business_impact: Mapped[str | None] = mapped_column(Text)
     recommendation: Mapped[str | None] = mapped_column(Text)
@@ -29,6 +35,10 @@ class Finding(UUIDMixin, TimestampMixin, Base):
     scan = relationship("Scan", back_populates="findings")
     asset = relationship("Asset", back_populates="findings")
     note_entries = relationship("FindingNote", back_populates="finding", cascade="all, delete-orphan")
+
+    @property
+    def asset_hostname(self) -> str | None:
+        return self.asset.hostname if self.asset is not None else None
 
 
 class FindingNote(UUIDMixin, TimestampMixin, Base):

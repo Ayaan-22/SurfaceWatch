@@ -11,6 +11,9 @@ from app.main import app
 from app import models  # noqa: F401
 
 
+FUTURE_AUTH_EXPIRY = "2027-07-03T23:59:59Z"
+
+
 @contextmanager
 def _client() -> Generator[TestClient, None, None]:
     engine = create_engine(
@@ -67,9 +70,24 @@ def test_register_login_and_project_crud() -> None:
                 "description": "Missing authorization checkbox",
                 "scan_frequency": "manual",
                 "authorization_confirmed": False,
+                "authorization_contact": "owner@example.org",
+                "authorization_expires_at": FUTURE_AUTH_EXPIRY,
             },
         )
         assert unauthorized_scope.status_code == 400
+
+        missing_evidence = client.post(
+            "/api/v1/projects",
+            headers=headers,
+            json={
+                "company_name": "Example Org",
+                "main_domain": "example.org",
+                "description": "Missing authorization evidence",
+                "scan_frequency": "manual",
+                "authorization_confirmed": True,
+            },
+        )
+        assert missing_evidence.status_code == 400
 
         create_response = client.post(
             "/api/v1/projects",
@@ -80,11 +98,16 @@ def test_register_login_and_project_crud() -> None:
                 "description": "Authorized public scope",
                 "scan_frequency": "weekly",
                 "authorization_confirmed": True,
+                "authorization_contact": "owner@example.org",
+                "authorization_expires_at": FUTURE_AUTH_EXPIRY,
+                "max_scan_profile": "aggressive",
             },
         )
         assert create_response.status_code == 201
         project = create_response.json()
         assert project["main_domain"] == "example.org"
+        assert project["authorization_contact"] == "owner@example.org"
+        assert project["max_scan_profile"] == "aggressive"
 
         list_response = client.get("/api/v1/projects", headers=headers)
         assert list_response.status_code == 200

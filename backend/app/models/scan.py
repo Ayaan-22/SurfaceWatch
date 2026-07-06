@@ -15,6 +15,7 @@ class Scan(UUIDMixin, TimestampMixin, Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     trigger: Mapped[str] = mapped_column(String(32), default="manual", nullable=False)
+    scan_profile: Mapped[str] = mapped_column(String(32), default="safe", nullable=False)
     assets_scanned: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     findings_created: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     risk_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

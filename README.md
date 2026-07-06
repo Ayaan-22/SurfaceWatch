@@ -1,14 +1,14 @@
 # SurfaceWatch
 
-SurfaceWatch is a safe attack surface monitoring platform that helps organizations track public-facing assets, detect risky configuration changes, identify missing web security controls, monitor certificate health, and generate professional security reports.
+SurfaceWatch is an authorized attack surface monitoring platform that helps organizations track public-facing assets, detect risky configuration changes, identify missing web security controls, monitor certificate health, run deeper website exposure checks, and generate professional security reports.
 
-It is designed for small companies, cybersecurity interns, and portfolio use. The product intentionally avoids exploitation, brute force, credential attacks, destructive testing, and aggressive scanning.
+It is designed for small companies, cybersecurity interns, and portfolio use. Default scans are conservative and passive-first. Explicit aggressive scans broaden coverage for authorized scopes while still avoiding exploitation, brute force, credential attacks, and destructive testing.
 
 ## Features
 
 - FastAPI backend with JWT authentication, password hashing, project CRUD, ownership checks, and domain safety validation.
 - PostgreSQL schema for users, projects, assets, scans, logs, findings, ports, SSL/TLS, security headers, technologies, changes, reports, notifications, and scheduled monitoring.
-- Safe scanner modules for passive seed discovery, DNS resolution, HTTP probing, SSL checks, header analysis, limited TCP port checks, technology fingerprinting, risk scoring, and change descriptions.
+- Scanner modules for passive seed discovery, DNS resolution, HTTP probing, SSL checks, header analysis, safe/aggressive TCP port profiles, technology fingerprinting, web exposure checks, risk scoring, and change descriptions.
 - Next.js dashboard with dark cybersecurity SaaS styling, risk metrics, charts, findings, assets, scans, reports, notifications, and ethical-use messaging.
 - Demo seed data so the dashboard looks useful before scanning real authorized assets.
 - Docker Compose for PostgreSQL, Redis, backend, and frontend.
@@ -149,7 +149,7 @@ Only run these commands against domains you own or are authorized to assess.
 
 ## Safety And Authorization Policy
 
-SurfaceWatch must only be used for assets owned by the user or covered by explicit authorization. Default checks are passive-first, low concurrency, time-limited, and non-exploitative. Internal and localhost targets are blocked by default unless `ALLOW_INTERNAL_TARGETS=true` is set for development.
+SurfaceWatch must only be used for assets owned by the user or covered by explicit authorization. Default checks are passive-first, low concurrency, time-limited, and non-exploitative. Aggressive checks must be explicitly selected for an authorized project and add broader port coverage plus safe HTTP probes for common public exposure mistakes such as exposed environment files, VCS metadata, backup archives, database dumps, directory listings, diagnostic pages, and server-status pages. Internal and localhost targets are blocked by default unless `ALLOW_INTERNAL_TARGETS=true` is set for development.
 
 ## Skills Demonstrated
 

@@ -5,6 +5,7 @@ from app.models import Finding, FindingNote
 from app.routes.deps import CurrentUser, DbSession, get_owned_project
 from app.schemas.finding import FindingNoteCreate, FindingNoteRead, FindingRead, FindingStatusUpdate
 from app.services.audit import record_audit
+from app.services.risk import sync_project_risk
 
 router = APIRouter(tags=["findings"])
 
@@ -34,11 +35,12 @@ def update_finding_status(
     finding = db.get(Finding, finding_id)
     if finding is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found.")
-    get_owned_project(finding.project_id, db, current_user)
+    project = get_owned_project(finding.project_id, db, current_user)
     finding.status = payload.status
     if payload.notes is not None:
         finding.notes = payload.notes
         db.add(FindingNote(finding_id=finding.id, user_id=current_user.id, note=payload.notes))
+    sync_project_risk(db, project)
     record_audit(db, "finding.status_updated", current_user.id, "finding", finding.id, metadata={"status": payload.status})
     db.commit()
     db.refresh(finding)

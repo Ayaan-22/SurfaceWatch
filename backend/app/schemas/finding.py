@@ -10,6 +10,12 @@ class FindingRead(BaseModel):
     description: str
     severity: str
     category: str
+    fingerprint: str | None = None
+    confidence: str = "medium"
+    cvss_score: float | None = None
+    evidence_hash: str | None = None
+    sla_due_at: datetime | None = None
+    owner: str | None = None
     evidence: Any = None
     business_impact: str | None = None
     recommendation: str | None = None
@@ -18,6 +24,7 @@ class FindingRead(BaseModel):
     first_seen_at: datetime
     last_seen_at: datetime
     asset_id: str | None = None
+    asset_hostname: str | None = None
 
     model_config = {"from_attributes": True}
 

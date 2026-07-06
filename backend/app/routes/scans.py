@@ -1,16 +1,26 @@
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, status
 from sqlalchemy import func, select
 
+from app.config import get_settings
 from app.database import SessionLocal
 from app.models import Asset, Finding, Notification, Project, Scan, ScanLog
 from app.models.mixins import utc_now
 from app.routes.deps import CurrentUser, DbSession, get_owned_project
 from app.scanner.orchestrator import run_project_scan
 from app.scanner.risk_engine import calculate_risk_score
-from app.schemas.scan import ScanLogRead, ScanRead
+from app.schemas.scan import ScanLogRead, ScanRead, ScanStartRequest
 from app.services.audit import record_audit
+from app.services.risk import sync_project_risk
 
 router = APIRouter(tags=["scans"])
+
+
+def _to_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _run_scan_task(scan_id: str) -> None:
@@ -24,7 +34,7 @@ def _run_scan_task(scan_id: str) -> None:
 def _sync_scan_summary(db: DbSession, scan: Scan) -> None:
     assets_scanned = db.scalar(select(func.count()).select_from(Asset).where(Asset.scan_id == scan.id)) or 0
     severities = list(db.scalars(select(Finding.severity).where(Finding.scan_id == scan.id)))
-    risk_score, risk_level, _ = calculate_risk_score(severities)
+    risk_score, _, _ = calculate_risk_score(severities)
 
     scan.assets_scanned = assets_scanned
     scan.findings_created = len(severities)
@@ -32,9 +42,7 @@ def _sync_scan_summary(db: DbSession, scan: Scan) -> None:
 
     project = db.get(Project, scan.project_id)
     if project is not None and scan.status in {"completed", "cancelled"}:
-        project.risk_score = risk_score
-        project.risk_level = risk_level
-        project.risk_status = "attention_required" if risk_score > 50 else "monitored"
+        sync_project_risk(db, project)
         project.last_scan_at = scan.finished_at or project.last_scan_at
 
 
@@ -86,16 +94,32 @@ def _upsert_cancelled_scan_notification(db: DbSession, project: Project, scan: S
 
 
 @router.post("/projects/{project_id}/scans", response_model=ScanRead, status_code=status.HTTP_202_ACCEPTED)
-def start_scan(project_id: str, background_tasks: BackgroundTasks, db: DbSession, current_user: CurrentUser) -> Scan:
+def start_scan(
+    project_id: str,
+    background_tasks: BackgroundTasks,
+    db: DbSession,
+    current_user: CurrentUser,
+    payload: ScanStartRequest | None = Body(default=None),
+) -> Scan:
     project = get_owned_project(project_id, db, current_user)
     if not project.authorization_confirmed:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Authorization confirmation is required.")
-    scan = Scan(project_id=project.id, status="pending", trigger="manual", started_at=None)
+    if project.authorization_expires_at is None or _to_aware_utc(project.authorization_expires_at) <= utc_now():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Authorization has expired or is missing an expiry.")
+    scan_profile = payload.scan_profile if payload is not None else "safe"
+    if scan_profile == "aggressive" and project.max_scan_profile != "aggressive":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Aggressive scans require project authorization scope to allow aggressive scanning.",
+        )
+    settings = get_settings()
+    scan = Scan(project_id=project.id, status="queued", trigger="manual", scan_profile=scan_profile, started_at=None)
     db.add(scan)
-    record_audit(db, "scan.started", current_user.id, "project", project.id)
+    record_audit(db, "scan.started", current_user.id, "project", project.id, metadata={"scan_profile": scan_profile})
     db.commit()
     db.refresh(scan)
-    background_tasks.add_task(_run_scan_task, scan.id)
+    if settings.inline_scan_runner:
+        background_tasks.add_task(_run_scan_task, scan.id)
     return scan
 
 
@@ -150,10 +174,11 @@ def retry_scan(scan_id: str, background_tasks: BackgroundTasks, db: DbSession, c
     if scan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan not found.")
     project = get_owned_project(scan.project_id, db, current_user)
-    retry = Scan(project_id=project.id, status="pending", trigger="retry")
+    retry = Scan(project_id=project.id, status="queued", trigger="retry", scan_profile=scan.scan_profile)
     db.add(retry)
     record_audit(db, "scan.retried", current_user.id, "scan", scan.id)
     db.commit()
     db.refresh(retry)
-    background_tasks.add_task(_run_scan_task, retry.id)
+    if get_settings().inline_scan_runner:
+        background_tasks.add_task(_run_scan_task, retry.id)
     return retry

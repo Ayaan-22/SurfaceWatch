@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { Bell } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { apiFetch, type Notification } from "@/lib/api";
+import { InlineLoader } from "@/components/ui/page-loader";
+import { apiFetch, formatApiDateTime, type Notification } from "@/lib/api";
 
 export function NotificationsClient() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -28,7 +29,7 @@ export function NotificationsClient() {
 
   return (
     <Card>
-      {loading ? <p className="text-slate-400">Loading notifications...</p> : null}
+      {loading ? <InlineLoader label="Loading notifications" /> : null}
       {error ? <p className="text-red-100">{error}</p> : null}
       <div className="space-y-3">
         {notifications.map((item) => (
@@ -38,7 +39,7 @@ export function NotificationsClient() {
               <div>
                 <p className="font-medium text-white">{item.title}</p>
                 <p className="mt-1 text-sm text-slate-400">{item.message}</p>
-                <p className="mt-1 text-xs text-slate-500">{new Date(item.created_at).toLocaleString()}</p>
+                <p className="mt-1 text-xs text-slate-500">{formatApiDateTime(item.created_at)}</p>
               </div>
             </div>
             <button onClick={() => markRead(item.id)} disabled={item.is_read} className="disabled:cursor-default">

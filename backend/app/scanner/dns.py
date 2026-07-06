@@ -1,3 +1,4 @@
+import ipaddress
 import socket
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
@@ -16,3 +17,19 @@ def resolve_host(hostname: str, timeout: float = 3.0) -> list[str]:
         return []
     except (socket.gaierror, OSError):
         return []
+
+
+def is_public_ip_address(value: str) -> bool:
+    try:
+        ip_address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return ip_address.is_global
+
+
+def unsafe_ip_addresses(ip_addresses: list[str]) -> list[str]:
+    return [ip_address for ip_address in ip_addresses if not is_public_ip_address(ip_address)]
+
+
+def resolution_is_public(ip_addresses: list[str]) -> bool:
+    return bool(ip_addresses) and not unsafe_ip_addresses(ip_addresses)

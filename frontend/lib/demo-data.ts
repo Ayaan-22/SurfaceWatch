@@ -52,7 +52,7 @@ export const changes = [
 ];
 
 export const scans = [
-  { id: "SW-20260701-001", status: "completed", started: "Jul 01, 11:38", duration: "4m 12s", assets: 18, findings: 6, score: 62 },
-  { id: "SW-20260622-001", status: "completed", started: "Jun 22, 09:00", duration: "3m 48s", assets: 15, findings: 5, score: 51 },
-  { id: "SW-20260615-001", status: "completed", started: "Jun 15, 09:00", duration: "3m 51s", assets: 14, findings: 4, score: 45 }
+  { id: "SW-20260701-001", status: "completed", started: "Jul 01, 11:38", duration: "4m 12s", profile: "aggressive", assets: 18, findings: 6, score: 62 },
+  { id: "SW-20260622-001", status: "completed", started: "Jun 22, 09:00", duration: "3m 48s", profile: "safe", assets: 15, findings: 5, score: 51 },
+  { id: "SW-20260615-001", status: "completed", started: "Jun 15, 09:00", duration: "3m 51s", profile: "safe", assets: 14, findings: 4, score: 45 }
 ];

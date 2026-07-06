@@ -68,7 +68,7 @@ def run_due_jobs(background_tasks: BackgroundTasks, db: DbSession, current_user:
         )
     )
     for job in jobs:
-        scan = Scan(project_id=job.project_id, status="pending", trigger="scheduled")
+        scan = Scan(project_id=job.project_id, status="pending", trigger="scheduled", scan_profile="safe")
         db.add(scan)
         db.flush()
         job.last_run_at = now

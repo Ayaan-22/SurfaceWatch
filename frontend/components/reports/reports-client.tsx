@@ -1,23 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Download, FileSpreadsheet, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { apiFetch, downloadReport, type Report } from "@/lib/api";
+import { apiFetch, downloadReport, formatApiDateTime, type Report } from "@/lib/api";
 
 export function ReportsClient({ projectId }: { projectId: string }) {
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function loadReports() {
+  const loadReports = useCallback(async () => {
     setReports(await apiFetch<Report[]>(`/projects/${projectId}/reports`));
-  }
+  }, [projectId]);
 
   useEffect(() => {
     loadReports().catch((err) => setError(err instanceof Error ? err.message : "Could not load reports."));
-  }, [projectId]);
+  }, [loadReports]);
 
   async function generate(type: "pdf" | "excel") {
     setError(null);
@@ -63,7 +63,7 @@ export function ReportsClient({ projectId }: { projectId: string }) {
             <div key={report.id} className="flex items-center justify-between rounded-lg border border-white/10 bg-surface-950 p-4">
               <div>
                 <p className="font-medium text-white">{report.report_type.toUpperCase()} report</p>
-                <p className="text-sm text-slate-400">{new Date(report.created_at).toLocaleString()} - {report.status}</p>
+                <p className="text-sm text-slate-400">{formatApiDateTime(report.created_at)} - {report.status}</p>
               </div>
               {report.status === "ready" ? (
                 <button onClick={() => downloadReport(report.id)} className="rounded-md border border-white/12 bg-white/8 px-3 py-2 text-sm text-slate-100 transition hover:bg-white/12">Download</button>

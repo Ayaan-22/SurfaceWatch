@@ -1,5 +1,6 @@
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000/api/v1";
 const TOKEN_KEY = "surfacewatch_token";
+const API_TIMESTAMP_WITH_TIMEZONE = /(?:z|[+-]\d{2}:?\d{2})$/i;
 
 export type Project = {
   id: string;
@@ -8,6 +9,9 @@ export type Project = {
   description?: string | null;
   scan_frequency: string;
   authorization_confirmed: boolean;
+  authorization_contact?: string | null;
+  authorization_expires_at?: string | null;
+  max_scan_profile: string;
   risk_score: number;
   risk_level: string;
   risk_status: string;
@@ -22,6 +26,7 @@ export type Scan = {
   project_id: string;
   status: string;
   trigger: string;
+  scan_profile: string;
   assets_scanned: number;
   findings_created: number;
   risk_score: number;
@@ -50,12 +55,19 @@ export type Finding = {
   description?: string;
   severity: string;
   category: string;
+  fingerprint?: string | null;
+  confidence: string;
+  cvss_score?: number | null;
+  evidence_hash?: string | null;
+  sla_due_at?: string | null;
+  owner?: string | null;
   evidence?: unknown;
   business_impact?: string | null;
   recommendation?: string | null;
   notes?: string | null;
   status: string;
   asset_id?: string | null;
+  asset_hostname?: string | null;
   first_seen_at?: string;
   last_seen_at: string;
 };
@@ -131,6 +143,23 @@ export function setToken(token: string) {
 
 export function clearToken() {
   window.localStorage.removeItem(TOKEN_KEY);
+}
+
+export function parseApiDate(value: string) {
+  const normalized = API_TIMESTAMP_WITH_TIMEZONE.test(value) ? value : `${value}Z`;
+  return new Date(normalized);
+}
+
+export function formatApiDateTime(value: string) {
+  return parseApiDate(value).toLocaleString();
+}
+
+export function formatApiDate(value: string) {
+  return parseApiDate(value).toLocaleDateString();
+}
+
+export function apiDateMs(value: string) {
+  return parseApiDate(value).getTime();
 }
 
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {

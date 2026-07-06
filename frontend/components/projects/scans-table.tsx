@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { apiFetch, type Scan } from "@/lib/api";
+import { InlineLoader } from "@/components/ui/page-loader";
+import { apiDateMs, apiFetch, formatApiDateTime, type Scan } from "@/lib/api";
 import { scans as demoScans } from "@/lib/demo-data";
 
 export function ScansTable({ projectId }: { projectId?: string }) {
@@ -24,23 +25,24 @@ export function ScansTable({ projectId }: { projectId?: string }) {
     ? apiScans.map((scan) => ({
         id: scan.id,
         status: scan.status,
-        started: scan.started_at ? new Date(scan.started_at).toLocaleString() : "Queued",
-        duration: scan.finished_at && scan.started_at ? `${Math.max(1, Math.round((Date.parse(scan.finished_at) - Date.parse(scan.started_at)) / 1000))}s` : "-",
+        started: scan.started_at ? formatApiDateTime(scan.started_at) : "Queued",
+        duration: scan.finished_at && scan.started_at ? `${Math.max(1, Math.round((apiDateMs(scan.finished_at) - apiDateMs(scan.started_at)) / 1000))}s` : "-",
         assets: scan.assets_scanned,
         findings: scan.findings_created,
-        score: scan.risk_score
+        score: scan.risk_score,
+        profile: scan.scan_profile
       }))
     : demoScans;
 
   return (
     <Card>
-      {loading ? <p className="mb-4 text-slate-400">Loading scans...</p> : null}
+      {loading ? <InlineLoader label="Loading scan history" /> : null}
       {error ? <p className="mb-4 rounded-md border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</p> : null}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-left text-sm">
           <thead className="text-slate-400">
             <tr className="border-b border-white/10">
-              {["Scan ID", "Start time", "Duration", "Status", "Assets", "Findings", "Risk score"].map((heading) => <th key={heading} className="py-3 pr-4 font-medium">{heading}</th>)}
+              {["Scan ID", "Start time", "Duration", "Status", "Profile", "Assets", "Findings", "Scan risk"].map((heading) => <th key={heading} className="py-3 pr-4 font-medium">{heading}</th>)}
             </tr>
           </thead>
           <tbody>
@@ -50,6 +52,7 @@ export function ScansTable({ projectId }: { projectId?: string }) {
                 <td className="py-4 pr-4">{scan.started}</td>
                 <td className="py-4 pr-4">{scan.duration}</td>
                 <td className="py-4 pr-4"><Badge tone={scan.status === "failed" ? "high" : "low"}>{scan.status}</Badge></td>
+                <td className="py-4 pr-4 capitalize">{scan.profile}</td>
                 <td className="py-4 pr-4">{scan.assets}</td>
                 <td className="py-4 pr-4">{scan.findings}</td>
                 <td className="py-4 pr-4">{scan.score}</td>

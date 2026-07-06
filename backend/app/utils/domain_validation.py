@@ -31,7 +31,7 @@ def validate_public_domain(value: str, allow_internal_targets: bool = False) -> 
         ip = ipaddress.ip_address(candidate)
         if allow_internal_targets:
             return DomainValidationResult(candidate, True)
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+        if not ip.is_global:
             return DomainValidationResult(candidate, False, "Internal, loopback, reserved, and private IPs are blocked.")
         return DomainValidationResult(candidate, True)
     except ValueError:

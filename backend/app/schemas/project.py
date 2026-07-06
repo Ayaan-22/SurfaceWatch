@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -19,6 +20,9 @@ class ProjectBase(BaseModel):
 
 class ProjectCreate(ProjectBase):
     authorization_confirmed: bool
+    authorization_contact: str | None = Field(default=None, min_length=3, max_length=255)
+    authorization_expires_at: datetime | None = None
+    max_scan_profile: Literal["safe", "aggressive"] = "safe"
 
 
 class ProjectUpdate(BaseModel):
@@ -26,11 +30,17 @@ class ProjectUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     scan_frequency: str | None = Field(default=None, pattern="^(manual|daily|weekly|monthly)$")
     authorization_confirmed: bool | None = None
+    authorization_contact: str | None = Field(default=None, min_length=3, max_length=255)
+    authorization_expires_at: datetime | None = None
+    max_scan_profile: Literal["safe", "aggressive"] | None = None
 
 
 class ProjectRead(ProjectBase):
     id: str
     authorization_confirmed: bool
+    authorization_contact: str | None = None
+    authorization_expires_at: datetime | None = None
+    max_scan_profile: str
     risk_score: int
     risk_level: str
     risk_status: str

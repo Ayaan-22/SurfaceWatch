@@ -8,11 +8,16 @@ import { apiFetch, type Project } from "@/lib/api";
 
 export function ProjectForm() {
   const router = useRouter();
+  const defaultExpiry = new Date();
+  defaultExpiry.setFullYear(defaultExpiry.getFullYear() + 1);
   const [companyName, setCompanyName] = useState("");
   const [mainDomain, setMainDomain] = useState("");
   const [description, setDescription] = useState("");
   const [scanFrequency, setScanFrequency] = useState("manual");
   const [authorizationConfirmed, setAuthorizationConfirmed] = useState(false);
+  const [authorizationContact, setAuthorizationContact] = useState("");
+  const [authorizationExpiresAt, setAuthorizationExpiresAt] = useState(defaultExpiry.toISOString().slice(0, 10));
+  const [maxScanProfile, setMaxScanProfile] = useState<"safe" | "aggressive">("safe");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -28,7 +33,10 @@ export function ProjectForm() {
           main_domain: mainDomain,
           description,
           scan_frequency: scanFrequency,
-          authorization_confirmed: authorizationConfirmed
+          authorization_confirmed: authorizationConfirmed,
+          authorization_contact: authorizationContact,
+          authorization_expires_at: authorizationExpiresAt ? `${authorizationExpiresAt}T23:59:59Z` : null,
+          max_scan_profile: maxScanProfile
         })
       });
       router.push(`/projects/${project.id}`);
@@ -63,6 +71,23 @@ export function ProjectForm() {
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
             <option value="monthly">Monthly</option>
+          </select>
+        </label>
+        <div className="grid gap-5 md:grid-cols-3">
+          <label className="space-y-2 text-sm md:col-span-2">
+            <span className="text-slate-300">Authorization contact</span>
+            <input value={authorizationContact} onChange={(event) => setAuthorizationContact(event.target.value)} className="h-11 w-full rounded-md border border-white/10 bg-surface-950 px-3 text-white outline-none focus:border-cyan-300/60" placeholder="security@example.com or engagement owner" />
+          </label>
+          <label className="space-y-2 text-sm">
+            <span className="text-slate-300">Authorization expiry</span>
+            <input value={authorizationExpiresAt} onChange={(event) => setAuthorizationExpiresAt(event.target.value)} type="date" className="h-11 w-full rounded-md border border-white/10 bg-surface-950 px-3 text-white outline-none focus:border-cyan-300/60" />
+          </label>
+        </div>
+        <label className="space-y-2 text-sm">
+          <span className="text-slate-300">Maximum approved scan profile</span>
+          <select value={maxScanProfile} onChange={(event) => setMaxScanProfile(event.target.value as "safe" | "aggressive")} className="h-11 w-full rounded-md border border-white/10 bg-surface-950 px-3 text-white outline-none focus:border-cyan-300/60">
+            <option value="safe">Safe only</option>
+            <option value="aggressive">Safe and aggressive</option>
           </select>
         </label>
         <label className="flex items-start gap-3 rounded-lg border border-emerald-400/20 bg-emerald-500/10 p-4 text-sm text-emerald-100">

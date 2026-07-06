@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.models import Asset, Change, Finding, Port, Project, Scan, SecurityHeader, SslResult
 from app.routes.deps import CurrentUser, DbSession, get_owned_project
 from app.schemas.project import DashboardSummary, ProjectRead
+from app.services.risk import sync_project_risk
 
 router = APIRouter(prefix="/projects", tags=["dashboard"])
 
@@ -12,6 +13,9 @@ router = APIRouter(prefix="/projects", tags=["dashboard"])
 @router.get("/{project_id}/dashboard", response_model=DashboardSummary)
 def project_dashboard(project_id: str, db: DbSession, current_user: CurrentUser) -> DashboardSummary:
     project = get_owned_project(project_id, db, current_user)
+    sync_project_risk(db, project)
+    db.commit()
+    db.refresh(project)
 
     total_assets = db.scalar(select(func.count(Asset.id)).where(Asset.project_id == project.id)) or 0
     active_assets = (

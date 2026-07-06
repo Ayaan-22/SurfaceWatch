@@ -1,12 +1,31 @@
 "use client";
 
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { riskTrend, severityData } from "@/lib/demo-data";
 
-export function RiskTrendChart() {
+export type RiskTrendPoint = {
+  date: string;
+  score: number;
+};
+
+export type SeverityPoint = {
+  name: string;
+  value: number;
+};
+
+const emptyRiskTrend: RiskTrendPoint[] = [{ date: "No scans", score: 0 }];
+const emptySeverityData: SeverityPoint[] = [
+  { name: "Critical", value: 0 },
+  { name: "High", value: 0 },
+  { name: "Medium", value: 0 },
+  { name: "Low", value: 0 },
+  { name: "Info", value: 0 }
+];
+
+export function RiskTrendChart({ data }: { data: RiskTrendPoint[] }) {
+  const chartData = data.length ? data : emptyRiskTrend;
   return (
     <ResponsiveContainer width="100%" height={260}>
-      <AreaChart data={riskTrend}>
+      <AreaChart data={chartData}>
         <defs>
           <linearGradient id="riskFill" x1="0" x2="0" y1="0" y2="1">
             <stop offset="5%" stopColor="#27d3ff" stopOpacity={0.35} />
@@ -23,10 +42,11 @@ export function RiskTrendChart() {
   );
 }
 
-export function SeverityChart() {
+export function SeverityChart({ data }: { data: SeverityPoint[] }) {
+  const chartData = data.length ? data : emptySeverityData;
   return (
     <ResponsiveContainer width="100%" height={260}>
-      <BarChart data={severityData}>
+      <BarChart data={chartData}>
         <CartesianGrid stroke="rgba(148,163,184,0.12)" vertical={false} />
         <XAxis dataKey="name" stroke="#94a3b8" tickLine={false} axisLine={false} />
         <YAxis stroke="#94a3b8" tickLine={false} axisLine={false} />

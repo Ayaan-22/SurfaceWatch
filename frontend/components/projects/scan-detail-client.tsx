@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { RefreshCw, StopCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { apiFetch, type Change, type Finding, type Scan, type ScanLog } from "@/lib/api";
+import { PageLoader } from "@/components/ui/page-loader";
+import { apiDateMs, apiFetch, formatApiDateTime, type Asset, type Change, type Finding, type Project, type Scan, type ScanLog } from "@/lib/api";
 
 function formatElapsed(ms: number) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -24,6 +25,8 @@ function isActiveScan(status: string) {
 
 export function ScanDetailClient({ scanId }: { scanId: string }) {
   const [scan, setScan] = useState<Scan | null>(null);
+  const [project, setProject] = useState<Project | null>(null);
+  const [assets, setAssets] = useState<Asset[]>([]);
   const [logs, setLogs] = useState<ScanLog[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [changes, setChanges] = useState<Change[]>([]);
@@ -33,7 +36,10 @@ export function ScanDetailClient({ scanId }: { scanId: string }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   const scanRef = useRef<Scan | null>(null);
-  scanRef.current = scan;
+
+  useEffect(() => {
+    scanRef.current = scan;
+  }, [scan]);
 
   useEffect(() => {
     let active = true;
@@ -41,14 +47,18 @@ export function ScanDetailClient({ scanId }: { scanId: string }) {
       try {
         const scanData = await apiFetch<Scan>(`/scans/${scanId}`);
         const logData = await apiFetch<ScanLog[]>(`/scans/${scanId}/logs`);
-        const [findingData, changeData] = await Promise.all([
+        const [projectData, assetData, findingData, changeData] = await Promise.all([
+          apiFetch<Project>(`/projects/${scanData.project_id}`),
+          apiFetch<Asset[]>(`/projects/${scanData.project_id}/assets`),
           apiFetch<Finding[]>(`/projects/${scanData.project_id}/findings`),
           apiFetch<Change[]>(`/scans/${scanId}/changes`)
         ]);
         if (active) {
           setScan(scanData);
+          setProject(projectData);
+          setAssets(assetData);
           setLogs(logData);
-          setFindings(findingData.filter((finding) => finding.last_seen_at));
+          setFindings(findingData.filter((finding) => finding.status === "open"));
           setChanges(changeData);
           setError(null);
         }
@@ -83,7 +93,7 @@ export function ScanDetailClient({ scanId }: { scanId: string }) {
     setNowMs(Date.now());
     const intervalId = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(intervalId);
-  }, [scan?.status]);
+  }, [scan]);
 
   async function cancelScan() {
     setError(null);
@@ -98,13 +108,15 @@ export function ScanDetailClient({ scanId }: { scanId: string }) {
     }
   }
 
-  if (loading) return <Card><p className="text-slate-400">Loading scan...</p></Card>;
+  if (loading) return <PageLoader title="Loading scan" detail="Gathering logs, assets, changes, and current findings." />;
   if (error && !scan) return <Card><p className="text-red-100">{error}</p></Card>;
   if (!scan) return null;
 
   const activeScan = isActiveScan(scan.status);
   const elapsedStart = scan.started_at ?? scan.created_at;
-  const elapsedMs = activeScan ? nowMs - new Date(elapsedStart).getTime() : 0;
+  const elapsedMs = activeScan ? nowMs - apiDateMs(elapsedStart) : 0;
+  const currentRiskScore = project?.risk_score ?? scan.risk_score;
+  const currentRiskLevel = project?.risk_level ?? "low";
 
   return (
     <div className="space-y-5">
@@ -136,11 +148,18 @@ export function ScanDetailClient({ scanId }: { scanId: string }) {
         </div>
       </div>
       {error ? <p className="rounded-md border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</p> : null}
-      <div className="grid gap-5 md:grid-cols-4">
-        <Card><p className="text-sm text-slate-400">Assets scanned</p><p className="mt-3 text-3xl font-semibold text-white">{scan.assets_scanned}</p></Card>
-        <Card><p className="text-sm text-slate-400">Findings</p><p className="mt-3 text-3xl font-semibold text-white">{scan.findings_created}</p></Card>
-        <Card><p className="text-sm text-slate-400">Risk score</p><p className="mt-3 text-3xl font-semibold text-white">{scan.risk_score}</p></Card>
-        <Card><p className="text-sm text-slate-400">Trigger</p><p className="mt-3 text-lg font-semibold text-white">{scan.trigger}</p></Card>
+      <div className="grid gap-5 md:grid-cols-3 xl:grid-cols-5">
+        <Card><p className="text-sm text-slate-400">Assets this scan</p><p className="mt-3 text-3xl font-semibold text-white">{scan.assets_scanned}</p></Card>
+        <Card><p className="text-sm text-slate-400">Total assets</p><p className="mt-3 text-3xl font-semibold text-white">{assets.length}</p></Card>
+        <Card><p className="text-sm text-slate-400">Open findings</p><p className="mt-3 text-3xl font-semibold text-white">{findings.length}</p></Card>
+        <Card>
+          <p className="text-sm text-slate-400">Current risk score</p>
+          <div className="mt-3 flex items-center gap-3">
+            <p className="text-3xl font-semibold text-white">{currentRiskScore}</p>
+            <Badge tone={currentRiskLevel}>{currentRiskLevel}</Badge>
+          </div>
+        </Card>
+        <Card><p className="text-sm text-slate-400">Profile</p><p className="mt-3 text-lg font-semibold capitalize text-white">{scan.scan_profile}</p></Card>
       </div>
       <Card>
         <h2 className="mb-4 text-lg font-semibold text-white">Changes from this scan</h2>
@@ -158,7 +177,7 @@ export function ScanDetailClient({ scanId }: { scanId: string }) {
         </div>
       </Card>
       <Card>
-        <h2 className="mb-4 text-lg font-semibold text-white">Related findings</h2>
+        <h2 className="mb-4 text-lg font-semibold text-white">Current project findings</h2>
         <div className="space-y-2">
           {findings.slice(0, 10).map((finding) => (
             <div key={finding.id} className="flex items-center justify-between rounded-md border border-white/10 bg-surface-950 p-3 text-sm">
@@ -169,7 +188,7 @@ export function ScanDetailClient({ scanId }: { scanId: string }) {
               <Badge tone={finding.severity}>{finding.severity}</Badge>
             </div>
           ))}
-          {!findings.length ? <p className="text-slate-400">No findings linked to this project yet.</p> : null}
+          {!findings.length ? <p className="text-slate-400">No open findings linked to this project.</p> : null}
         </div>
       </Card>
       <Card>
@@ -177,7 +196,7 @@ export function ScanDetailClient({ scanId }: { scanId: string }) {
         <div className="space-y-2">
           {logs.map((log) => (
             <div key={log.id} className="rounded-md border border-white/10 bg-surface-950 p-3 text-sm">
-              <span className="mr-3 text-slate-500">{new Date(log.created_at).toLocaleString()}</span>
+              <span className="mr-3 text-slate-500">{formatApiDateTime(log.created_at)}</span>
               <span className={log.level === "error" ? "text-red-200" : "text-cyan-100"}>{log.level}</span>
               <span className="ml-3 text-slate-300">{log.message}</span>
             </div>

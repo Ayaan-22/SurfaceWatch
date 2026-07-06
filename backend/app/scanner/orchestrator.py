@@ -1,6 +1,10 @@
 import logging
+import hashlib
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from dataclasses import dataclass
+from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -10,11 +14,14 @@ from app.models import Asset, Change, Finding, Notification, Port, Project, Scan
 from app.models.mixins import utc_now
 from app.scanner.headers import analyze_headers
 from app.scanner.http_probe import probe_http
+from app.scanner.dns import resolution_is_public, resolve_host, unsafe_ip_addresses
 from app.scanner.ports import check_tcp_port
 from app.scanner.risk_engine import calculate_risk_score
 from app.scanner.ssl_checker import check_ssl
 from app.scanner.subdomains import iter_passive_seed_discovery
 from app.scanner.tech_fingerprint import detect_technologies
+from app.scanner.web_exposure import AGGRESSIVE_EXPOSURE_PATHS, analyze_web_exposures, probe_web_exposure_paths
+from app.services.risk import sync_project_risk
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +33,10 @@ ASSET_TIMEOUT_SECONDS = 30  # Max time for a single asset (HTTP + SSL + ports)
 
 class _ScanCancelled(Exception):
     """Raised when a scan is cancelled or times out globally."""
+
+
+class _UnsafeTargetResolution(Exception):
+    """Raised when a target resolves to internal or otherwise unsafe IP space."""
 
 
 def _check_scan_health(db: Session, scan: Scan, start_time: float, max_duration: int) -> None:
@@ -41,13 +52,56 @@ def _check_scan_health(db: Session, scan: Scan, start_time: float, max_duration:
 RISKY_PORTS = {
     21: ("FTP exposed publicly", "medium", "Restrict FTP or replace it with a secure transfer workflow."),
     22: ("SSH exposed publicly", "low", "Limit SSH to VPN, bastion hosts, or allowlisted management IPs."),
+    23: ("Telnet exposed publicly", "critical", "Disable Telnet and replace it with SSH through a restricted management path."),
+    445: ("SMB exposed publicly", "high", "Block public SMB access and restrict file sharing to private networks."),
+    1433: ("Database port exposed", "critical", "Block public Microsoft SQL Server access immediately."),
+    1521: ("Database port exposed", "critical", "Block public Oracle database access immediately."),
+    2049: ("NFS exposed publicly", "high", "Block public NFS access and restrict file shares to private networks."),
+    2375: ("Docker API exposed publicly", "critical", "Disable unauthenticated Docker API exposure and restrict daemon access."),
+    2376: ("Docker API exposed publicly", "high", "Restrict Docker API access to trusted administration networks."),
     3000: ("Development port exposed", "high", "Remove public access or restrict it to an internal network."),
     5000: ("Development port exposed", "high", "Remove public access or restrict it to an internal network."),
     5432: ("Database port exposed", "critical", "Block public PostgreSQL access immediately."),
+    5601: ("Kibana exposed publicly", "high", "Restrict Kibana to VPN, SSO, or trusted administration networks."),
+    5900: ("VNC exposed publicly", "critical", "Block public VNC access and require private network access."),
+    5984: ("CouchDB exposed publicly", "critical", "Block public CouchDB access immediately."),
     3306: ("Database port exposed", "critical", "Block public MySQL access immediately."),
     6379: ("Redis exposed publicly", "critical", "Block public Redis access immediately."),
+    9000: ("Administrative service exposed", "high", "Restrict administrative interfaces to trusted networks."),
     9200: ("Elasticsearch exposed publicly", "critical", "Block public Elasticsearch access immediately."),
+    9300: ("Elasticsearch transport exposed publicly", "critical", "Block public Elasticsearch transport access immediately."),
+    11211: ("Memcached exposed publicly", "critical", "Block public Memcached access immediately."),
+    27017: ("MongoDB exposed publicly", "critical", "Block public MongoDB access immediately."),
+    27018: ("MongoDB exposed publicly", "critical", "Block public MongoDB access immediately."),
 }
+
+
+@dataclass(frozen=True)
+class ScanProfile:
+    name: str
+    ports: list[int]
+    max_assets: int
+    asset_timeout_seconds: int
+    exposure_paths: list[str]
+
+
+def _scan_profile(scan: Scan, settings) -> ScanProfile:
+    profile = scan.scan_profile if scan.scan_profile in {"safe", "aggressive"} else "safe"
+    if profile == "aggressive":
+        return ScanProfile(
+            name="aggressive",
+            ports=settings.aggressive_ports,
+            max_assets=settings.aggressive_max_discovered_assets,
+            asset_timeout_seconds=max(ASSET_TIMEOUT_SECONDS, 60),
+            exposure_paths=AGGRESSIVE_EXPOSURE_PATHS,
+        )
+    return ScanProfile(
+        name="safe",
+        ports=settings.default_ports,
+        max_assets=settings.max_discovered_assets,
+        asset_timeout_seconds=ASSET_TIMEOUT_SECONDS,
+        exposure_paths=[],
+    )
 
 
 def _log(db: Session, scan: Scan, level: str, message: str) -> None:
@@ -55,7 +109,15 @@ def _log(db: Session, scan: Scan, level: str, message: str) -> None:
     db.flush()
 
 
-def _upsert_scan_stop_notification(db: Session, project: Project, scan: Scan, title: str, message: str, notification_type: str) -> None:
+def _upsert_scan_stop_notification(
+    db: Session,
+    project: Project,
+    scan: Scan,
+    title: str,
+    message: str,
+    notification_type: str,
+    risk_score: int,
+) -> None:
     notification = None
     for existing in db.scalars(
         select(Notification).where(
@@ -77,7 +139,7 @@ def _upsert_scan_stop_notification(db: Session, project: Project, scan: Scan, ti
                 title=title,
                 message=message,
                 notification_type=notification_type,
-                metadata_json={"scan_id": scan.id, "risk_score": scan.risk_score},
+                metadata_json={"scan_id": scan.id, "risk_score": risk_score, "scan_risk_score": scan.risk_score},
             )
         )
         return
@@ -85,13 +147,52 @@ def _upsert_scan_stop_notification(db: Session, project: Project, scan: Scan, ti
     notification.title = title
     notification.message = message
     notification.notification_type = notification_type
-    notification.metadata_json = {"scan_id": scan.id, "risk_score": scan.risk_score}
+    notification.metadata_json = {"scan_id": scan.id, "risk_score": risk_score, "scan_risk_score": scan.risk_score}
     notification.is_read = False
 
 
 def _asset_risk_level(severities: list[str]) -> str:
     score, level, _ = calculate_risk_score(severities)
     return level if score else "low"
+
+
+SLA_DAYS_BY_SEVERITY = {
+    "critical": 7,
+    "high": 14,
+    "medium": 30,
+    "low": 90,
+    "info": 180,
+}
+
+
+CVSS_BY_SEVERITY = {
+    "critical": 9.5,
+    "high": 8.0,
+    "medium": 5.5,
+    "low": 2.5,
+    "info": 0.0,
+}
+
+
+def _stable_json(value: dict | list | str | None) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _hash_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _finding_fingerprint(project: Project, asset: Asset, title: str, category: str, evidence: dict | list | str | None) -> str:
+    key = "|".join(
+        [
+            project.id,
+            asset.hostname.lower(),
+            category.lower(),
+            title.lower(),
+            _stable_json(evidence),
+        ]
+    )
+    return _hash_text(key)
 
 
 def _create_finding(
@@ -108,13 +209,14 @@ def _create_finding(
     recommendation: str,
 ) -> None:
     now = utc_now()
+    fingerprint = _finding_fingerprint(project, asset, title, category, evidence)
+    evidence_hash = _hash_text(_stable_json(evidence))
+    normalized_severity = severity.lower()
+    sla_due_at = now + timedelta(days=SLA_DAYS_BY_SEVERITY.get(normalized_severity, 30))
     finding = db.scalar(
         select(Finding).where(
             Finding.project_id == project.id,
-            Finding.asset_id == asset.id,
-            Finding.title == title,
-            Finding.category == category,
-            Finding.status == "open",
+            Finding.fingerprint == fingerprint,
         )
     )
     if finding is None:
@@ -127,6 +229,11 @@ def _create_finding(
                 description=description,
                 severity=severity,
                 category=category,
+                fingerprint=fingerprint,
+                confidence="high",
+                cvss_score=CVSS_BY_SEVERITY.get(normalized_severity),
+                evidence_hash=evidence_hash,
+                sla_due_at=sla_due_at,
                 evidence=evidence,
                 business_impact=business_impact,
                 recommendation=recommendation,
@@ -136,7 +243,16 @@ def _create_finding(
         )
         return
     finding.scan_id = scan.id
+    finding.asset_id = asset.id
     finding.severity = severity
+    finding.confidence = "high"
+    finding.cvss_score = CVSS_BY_SEVERITY.get(normalized_severity)
+    finding.evidence_hash = evidence_hash
+    if finding.status == "fixed":
+        finding.status = "open"
+        finding.sla_due_at = sla_due_at
+    elif finding.sla_due_at is None:
+        finding.sla_due_at = sla_due_at
     finding.evidence = evidence
     finding.business_impact = business_impact
     finding.recommendation = recommendation
@@ -219,14 +335,22 @@ def _upsert_technology(db: Session, project: Project, scan: Scan, asset: Asset, 
     technology.last_seen_at = now
 
 
-def _scan_asset_network(hostname: str, settings) -> tuple:
+def _scan_asset_network(hostname: str, settings, profile: ScanProfile) -> tuple:
     """Run all network I/O for a single asset. Executed in a thread so we can enforce a hard timeout."""
+    resolved_ips = resolve_host(hostname)
+    if not settings.allow_internal_targets and not resolution_is_public(resolved_ips):
+        unsafe = unsafe_ip_addresses(resolved_ips)
+        reason = ", ".join(unsafe) if unsafe else "no public DNS resolution"
+        raise _UnsafeTargetResolution(f"{hostname} resolved outside allowed public scope: {reason}.")
     http_results = probe_http(hostname, settings.scan_timeout_seconds)
     ssl_result = check_ssl(hostname, settings.scan_timeout_seconds)
     port_results = []
-    for port_number in settings.default_ports:
+    for port_number in profile.ports:
         port_results.append(check_tcp_port(hostname, port_number, min(settings.scan_timeout_seconds, 1.5)))
-    return http_results, ssl_result, port_results
+    exposure_results = []
+    if profile.exposure_paths:
+        exposure_results = probe_web_exposure_paths(hostname, profile.exposure_paths, settings.scan_timeout_seconds)
+    return http_results, ssl_result, port_results, exposure_results
 
 
 def run_project_scan(scan_id: str, db: Session) -> None:
@@ -242,11 +366,19 @@ def run_project_scan(scan_id: str, db: Session) -> None:
         return
     if scan.status == "cancelled":
         return
+    profile = _scan_profile(scan, settings)
 
     now = utc_now()
     scan.status = "running"
     scan.started_at = now
-    _log(db, scan, "info", f"Starting safe scan for {project.main_domain}.")
+    _log(db, scan, "info", f"Starting {profile.name} scan for {project.main_domain}.")
+    if profile.name == "aggressive":
+        _log(
+            db,
+            scan,
+            "warning",
+            "Aggressive profile enabled: expanded port coverage and deeper HTTP exposure probes will run within the authorized scope.",
+        )
     db.commit()
 
     start_time = time.monotonic()
@@ -259,7 +391,7 @@ def run_project_scan(scan_id: str, db: Session) -> None:
         for candidate in iter_passive_seed_discovery(
             project.main_domain,
             settings.discovery_timeout_seconds,
-            settings.max_discovered_assets,
+            profile.max_assets,
         ):
             _check_scan_health(db, scan, start_time, max_duration)
 
@@ -307,14 +439,25 @@ def run_project_scan(scan_id: str, db: Session) -> None:
             db.commit()
 
             try:
-                future = _ASSET_POOL.submit(_scan_asset_network, candidate.hostname, settings)
-                http_results, ssl_result, port_results = future.result(timeout=ASSET_TIMEOUT_SECONDS)
+                future = _ASSET_POOL.submit(_scan_asset_network, candidate.hostname, settings, profile)
+                http_results, ssl_result, port_results, exposure_results = future.result(timeout=profile.asset_timeout_seconds)
                 _check_scan_health(db, scan, start_time, max_duration)
             except FuturesTimeoutError:
-                logger.warning("Asset %s timed out after %ds, skipping deep scan.", candidate.hostname, ASSET_TIMEOUT_SECONDS)
-                _log(db, scan, "warning", f"Asset {candidate.hostname} timed out after {ASSET_TIMEOUT_SECONDS}s, skipping.")
+                logger.warning("Asset %s timed out after %ds, skipping deep scan.", candidate.hostname, profile.asset_timeout_seconds)
+                _log(db, scan, "warning", f"Asset {candidate.hostname} timed out after {profile.asset_timeout_seconds}s, skipping.")
                 future.cancel()
                 _check_scan_health(db, scan, start_time, max_duration)
+                asset.risk_level = "unknown"
+                running_score, _, _ = calculate_risk_score(severities)
+                scan.assets_scanned = assets_scanned
+                scan.findings_created = len(severities)
+                scan.risk_score = running_score
+                db.commit()
+                continue
+            except _UnsafeTargetResolution as exc:
+                logger.warning("Asset %s blocked by target safety guard: %s", candidate.hostname, exc)
+                _log(db, scan, "warning", str(exc))
+                asset.status = "blocked"
                 asset.risk_level = "unknown"
                 running_score, _, _ = calculate_risk_score(severities)
                 scan.assets_scanned = assets_scanned
@@ -334,6 +477,22 @@ def run_project_scan(scan_id: str, db: Session) -> None:
                 scan.risk_score = running_score
                 db.commit()
                 continue
+
+            for exposure in analyze_web_exposures(http_results, exposure_results):
+                asset_severities.append(exposure.severity)
+                _create_finding(
+                    db,
+                    project,
+                    scan,
+                    asset,
+                    exposure.title,
+                    exposure.description,
+                    exposure.severity,
+                    exposure.category,
+                    exposure.evidence,
+                    exposure.business_impact,
+                    exposure.recommendation,
+                )
 
             best_http = next((result for result in http_results if result.status_code), None)
             if best_http:
@@ -506,15 +665,13 @@ def run_project_scan(scan_id: str, db: Session) -> None:
                     )
                 )
 
-        score, level, _ = calculate_risk_score(severities)
+        score, _, _ = calculate_risk_score(severities)
         scan.status = "completed"
         scan.finished_at = utc_now()
         scan.assets_scanned = assets_scanned
         scan.findings_created = len(severities)
         scan.risk_score = score
-        project.risk_score = score
-        project.risk_level = level
-        project.risk_status = "attention_required" if score > 50 else "monitored"
+        project_score, _ = sync_project_risk(db, project)
         project.last_scan_at = scan.finished_at
         _log(db, scan, "info", f"Scan completed with risk score {score}.")
         db.add(
@@ -522,9 +679,9 @@ def run_project_scan(scan_id: str, db: Session) -> None:
                 user_id=project.owner_id,
                 project_id=project.id,
                 title="Scan completed",
-                message=f"{project.company_name} scan completed with risk score {score}.",
+                message=f"{project.company_name} scan completed with risk score {project_score}.",
                 notification_type="scan_completed",
-                metadata_json={"scan_id": scan.id, "risk_score": score},
+                metadata_json={"scan_id": scan.id, "risk_score": project_score, "scan_risk_score": score},
             )
         )
         if any(severity in {"critical", "high"} for severity in severities):
@@ -541,7 +698,7 @@ def run_project_scan(scan_id: str, db: Session) -> None:
         db.commit()
 
     except _ScanCancelled as cancel_exc:
-        score, level, _ = calculate_risk_score(severities)
+        score, _, _ = calculate_risk_score(severities)
         db.refresh(scan)
         was_user_cancel = scan.status == "cancelled"
         scan.status = "cancelled" if was_user_cancel else "completed"
@@ -549,9 +706,7 @@ def run_project_scan(scan_id: str, db: Session) -> None:
         scan.assets_scanned = assets_scanned
         scan.findings_created = len(severities)
         scan.risk_score = score
-        project.risk_score = score
-        project.risk_level = level
-        project.risk_status = "attention_required" if score > 50 else "monitored"
+        project_score, _ = sync_project_risk(db, project)
         project.last_scan_at = scan.finished_at
         reason = "cancelled by user" if was_user_cancel else str(cancel_exc)
         _log(db, scan, "info", f"Scan stopped early ({reason}). Processed {assets_scanned} assets.")
@@ -560,8 +715,9 @@ def run_project_scan(scan_id: str, db: Session) -> None:
             project,
             scan,
             "Scan cancelled" if was_user_cancel else "Scan completed (partial)",
-            f"{project.company_name} scan {reason}. Risk score: {score}.",
+            f"{project.company_name} scan {reason}. Risk score: {project_score}.",
             "scan_cancelled" if was_user_cancel else "scan_completed",
+            project_score,
         )
         db.commit()
 

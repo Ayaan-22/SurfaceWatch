@@ -1,6 +1,11 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
+
+
+class ScanStartRequest(BaseModel):
+    scan_profile: Literal["safe", "aggressive"] = "safe"
 
 
 class ScanRead(BaseModel):
@@ -10,6 +15,7 @@ class ScanRead(BaseModel):
     finished_at: datetime | None = None
     status: str
     trigger: str
+    scan_profile: str
     assets_scanned: int
     findings_created: int
     risk_score: int

@@ -1,6 +1,7 @@
 import argparse
 import json
 
+from app.scanner.worker import run_scan_worker
 from app.scanner.headers import analyze_headers
 from app.scanner.ports import check_tcp_port
 from app.scanner.ssl_checker import check_ssl
@@ -19,6 +20,9 @@ def main() -> None:
     ports_parser.add_argument("--ports", default="80,443,8080,8443")
     headers_parser = subcommands.add_parser("headers")
     headers_parser.add_argument("--header", action="append", default=[])
+    worker_parser = subcommands.add_parser("scan-worker")
+    worker_parser.add_argument("--once", action="store_true")
+    worker_parser.add_argument("--poll-interval", type=float, default=2.0)
 
     args = parser.parse_args()
     if args.command == "scan":
@@ -31,6 +35,8 @@ def main() -> None:
     elif args.command == "headers":
         headers = dict(item.split(":", 1) for item in args.header)
         print(json.dumps(analyze_headers(headers), indent=2))
+    elif args.command == "scan-worker":
+        run_scan_worker(poll_interval_seconds=args.poll_interval, once=args.once)
 
 
 if __name__ == "__main__":

@@ -28,8 +28,10 @@ class Settings(BaseModel):
     scan_timeout_seconds: float = 3.0
     discovery_timeout_seconds: float = 10.0
     scan_concurrency: int = 5
+    inline_scan_runner: bool = True
     max_discovered_assets: int = 250
     max_scan_duration_seconds: int = 600
+    aggressive_max_discovered_assets: int = 500
     default_ports: list[int] = [
         80,
         443,
@@ -46,6 +48,67 @@ class Settings(BaseModel):
         21,
         25,
     ]
+    aggressive_ports: list[int] = [
+        20,
+        21,
+        22,
+        23,
+        25,
+        53,
+        80,
+        110,
+        143,
+        389,
+        443,
+        445,
+        465,
+        587,
+        993,
+        995,
+        1433,
+        1521,
+        2049,
+        2375,
+        2376,
+        3000,
+        3306,
+        5000,
+        5432,
+        5601,
+        5900,
+        5984,
+        6379,
+        8000,
+        8080,
+        8443,
+        9000,
+        9200,
+        9300,
+        11211,
+        27017,
+        27018,
+    ]
+
+
+def _validate_settings(settings: Settings) -> None:
+    if settings.environment != "production":
+        return
+
+    errors: list[str] = []
+    if settings.debug:
+        errors.append("DEBUG must be false")
+    if settings.secret_key in {"change-me-in-production", "change-this-to-a-long-random-secret"} or len(settings.secret_key) < 32:
+        errors.append("SECRET_KEY must be a long random value")
+    if settings.database_url.startswith("sqlite"):
+        errors.append("DATABASE_URL must not use SQLite")
+    if settings.allow_internal_targets:
+        errors.append("ALLOW_INTERNAL_TARGETS must be false")
+    if "*" in settings.cors_origins or any("localhost" in origin or "127.0.0.1" in origin for origin in settings.cors_origins):
+        errors.append("CORS_ORIGINS must contain production origins only")
+
+    if errors:
+        raise RuntimeError(f"Invalid production configuration: {'; '.join(errors)}")
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -73,7 +136,12 @@ def get_settings() -> Settings:
     if ports_raw:
         default_ports = [int(item.strip()) for item in ports_raw.split(",") if item.strip()]
 
-    return Settings(
+    aggressive_ports_raw = os.getenv("AGGRESSIVE_PORTS")
+    aggressive_ports = Settings().aggressive_ports
+    if aggressive_ports_raw:
+        aggressive_ports = [int(item.strip()) for item in aggressive_ports_raw.split(",") if item.strip()]
+
+    settings = Settings(
         app_name=os.getenv("APP_NAME", "SurfaceWatch API"),
         environment=os.getenv("ENVIRONMENT", "development"),
         debug=os.getenv("DEBUG", "false").lower() == "true",
@@ -88,7 +156,12 @@ def get_settings() -> Settings:
         scan_timeout_seconds=float(os.getenv("SCAN_TIMEOUT_SECONDS", "3.0")),
         discovery_timeout_seconds=float(os.getenv("DISCOVERY_TIMEOUT_SECONDS", "10.0")),
         scan_concurrency=int(os.getenv("SCAN_CONCURRENCY", "5")),
+        inline_scan_runner=os.getenv("INLINE_SCAN_RUNNER", "true").lower() == "true",
         max_discovered_assets=int(os.getenv("MAX_DISCOVERED_ASSETS", "250")),
         max_scan_duration_seconds=int(os.getenv("MAX_SCAN_DURATION_SECONDS", "600")),
+        aggressive_max_discovered_assets=int(os.getenv("AGGRESSIVE_MAX_DISCOVERED_ASSETS", "500")),
         default_ports=default_ports,
+        aggressive_ports=aggressive_ports,
     )
+    _validate_settings(settings)
+    return settings

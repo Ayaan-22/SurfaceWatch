@@ -32,6 +32,9 @@ def seed_demo_data(db: Session) -> None:
         main_domain="northstar-demo.test",
         description="Seed project with safe, fictional exposure data for dashboard demos.",
         authorization_confirmed=True,
+        authorization_contact="demo@surfacewatch.dev",
+        authorization_expires_at=now + timedelta(days=365),
+        max_scan_profile="aggressive",
         scan_frequency="weekly",
         risk_score=62,
         risk_level="high",
@@ -39,7 +42,16 @@ def seed_demo_data(db: Session) -> None:
         last_scan_at=now,
         next_scan_at=now + timedelta(days=7),
     )
-    scan = Scan(project=project, status="completed", started_at=now - timedelta(minutes=4), finished_at=now, assets_scanned=4, findings_created=6, risk_score=62)
+    scan = Scan(
+        project=project,
+        status="completed",
+        scan_profile="safe",
+        started_at=now - timedelta(minutes=4),
+        finished_at=now,
+        assets_scanned=4,
+        findings_created=6,
+        risk_score=62,
+    )
     assets = [
         Asset(project=project, scan=scan, hostname="northstar-demo.test", ip_address="203.0.113.10", status="active", source="demo_seed", first_seen_at=now - timedelta(days=20), last_seen_at=now),
         Asset(project=project, scan=scan, hostname="api.northstar-demo.test", ip_address="203.0.113.11", status="active", source="demo_seed", first_seen_at=now - timedelta(days=14), last_seen_at=now),
