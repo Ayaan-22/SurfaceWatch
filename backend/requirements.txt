@@ -9,7 +9,7 @@ passlib[bcrypt]==1.7.4
 psycopg[binary]==3.2.1
 PyJWT[crypto]==2.13.0
 python-multipart==0.0.32
-reportlab==4.2.2
+reportlab==5.0.0
 SQLAlchemy==2.0.32
 uvicorn[standard]==0.30.5
 pytest==9.1.1
