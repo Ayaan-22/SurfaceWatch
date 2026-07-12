@@ -88,3 +88,37 @@ def test_passive_discovery_respects_max_candidates_with_root_first(monkeypatch) 
 
     assert len(candidates) == 5
     assert candidates[0].hostname == "example.com"
+
+
+def test_discovery_exposes_provider_failures_instead_of_silently_dropping_results(monkeypatch) -> None:
+    monkeypatch.setattr(
+        subdomains,
+        "_certificate_transparency_hostnames",
+        lambda domain, timeout_seconds: (_ for _ in ()).throw(RuntimeError("provider unavailable")),
+    )
+    monkeypatch.setattr(subdomains, "_certspotter_hostnames", lambda domain, timeout_seconds: {"shop.example.com"})
+    monkeypatch.setattr(subdomains, "_hackertarget_hostnames", lambda domain, timeout_seconds: set())
+    monkeypatch.setattr(subdomains, "_rapiddns_hostnames", lambda domain, timeout_seconds: set())
+    monkeypatch.setattr(subdomains, "resolve_host", lambda hostname: ["93.184.216.34"] if hostname == "shop.example.com" else [])
+
+    result = subdomains.discover_subdomains("example.com", timeout_seconds=0.1, max_candidates=20)
+
+    assert result.complete is False
+    assert result.sources["crtsh"].status == "failed"
+    assert "provider unavailable" in (result.sources["crtsh"].error or "")
+    assert any(candidate.hostname == "shop.example.com" for candidate in result.candidates)
+
+
+def test_aggressive_discovery_adds_bounded_common_dns_candidates(monkeypatch) -> None:
+    monkeypatch.setattr(subdomains, "_certificate_transparency_hostnames", lambda domain, timeout_seconds: set())
+    monkeypatch.setattr(subdomains, "_certspotter_hostnames", lambda domain, timeout_seconds: set())
+    monkeypatch.setattr(subdomains, "_hackertarget_hostnames", lambda domain, timeout_seconds: set())
+    monkeypatch.setattr(subdomains, "_rapiddns_hostnames", lambda domain, timeout_seconds: set())
+    monkeypatch.setattr(subdomains, "resolve_host", lambda hostname: ["93.184.216.34"] if hostname == "admin.example.com" else [])
+
+    result = subdomains.discover_subdomains("example.com", timeout_seconds=0.1, max_candidates=100, aggressive_dns=True)
+
+    admin = next(candidate for candidate in result.candidates if candidate.hostname == "admin.example.com")
+    assert admin.source == "aggressive_dns"
+    assert admin.status == "active"
+    assert result.aggressive_dns_enabled is True

@@ -61,10 +61,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <AuthGate>
     <div className="min-h-screen bg-surface-950 text-slate-100">
-      <aside className={cn("fixed inset-y-0 left-0 hidden border-r border-white/10 bg-surface-900/96 px-3 py-4 transition-[width] duration-200 lg:block", sidebarCollapsed ? "w-20" : "w-60")}>
-        <div className={cn("flex items-center justify-between gap-2", sidebarCollapsed && "flex-col")}>
-        <Link href="/dashboard" className={cn("flex min-w-0 items-center gap-3 px-1", sidebarCollapsed && "justify-center")}>
-          <span className="grid h-10 w-10 place-items-center rounded-lg bg-cyan-300 text-slate-950">
+      <aside className={cn("fixed inset-y-0 left-0 z-30 hidden overflow-hidden border-r border-white/10 bg-surface-900 px-3 py-4 transition-[width] duration-200 lg:block", sidebarCollapsed ? "w-20" : "w-60")}>
+        <div className={cn("flex items-center gap-2", sidebarCollapsed ? "flex-col" : "justify-between")}>
+        <Link href="/dashboard" className={cn("flex min-w-0 items-center gap-3 rounded-lg px-1", sidebarCollapsed && "justify-center")}>
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-cyan-300 text-slate-950">
             <Radar size={22} />
           </span>
           <div className={cn("min-w-0", sidebarCollapsed && "hidden")}>
@@ -82,7 +82,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
         </button>
         </div>
-        <nav className="mt-8 space-y-1">
+        <nav className={cn("space-y-1", sidebarCollapsed ? "mt-6" : "mt-8")}>
           {nav.map((item) => (
             <Link
               key={item.key}
@@ -98,23 +98,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </Link>
           ))}
         </nav>
-        <div className={cn("absolute bottom-5 left-3 right-3 rounded-lg border border-emerald-400/20 bg-emerald-500/10 text-sm text-emerald-100", sidebarCollapsed ? "p-3" : "p-4")}>
-          <div className="mb-2 flex items-center gap-2 font-semibold">
-            <ShieldCheck size={16} />
+        <div className={cn("absolute bottom-5 left-3 right-3 rounded-lg border border-emerald-400/20 bg-emerald-500/10 text-sm text-emerald-100", sidebarCollapsed ? "grid h-14 place-items-center p-0" : "p-4")}>
+          <div className={cn("flex items-center gap-2 font-semibold", !sidebarCollapsed && "mb-2")}>
+            <ShieldCheck size={16} className="shrink-0" />
             <span className={cn(sidebarCollapsed && "sr-only")}>Authorized use only</span>
           </div>
           <p className={cn("text-xs leading-5 text-emerald-100/80", sidebarCollapsed && "sr-only")}>Only monitor domains and IPs you own or have written permission to assess.</p>
         </div>
       </aside>
       <main className={cn("transition-[padding] duration-200", sidebarCollapsed ? "lg:pl-20" : "lg:pl-60")}>
-        <header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-white/10 bg-surface-950/86 px-5 backdrop-blur">
+        <header className="sticky top-0 z-20 flex h-20 items-center justify-between border-b border-white/10 bg-surface-950 px-5 shadow-[0_1px_0_rgba(255,255,255,0.04)] lg:px-8">
           <WorkspaceTitle />
           <div className="flex items-center gap-3">
             <Button href="/projects/new" variant="secondary">New project</Button>
             <LogoutButton />
           </div>
         </header>
-        <div key={pathname} className="page-enter px-5 py-6 lg:px-8">{children}</div>
+        <div key={pathname} className="page-enter px-5 py-8 lg:px-10">{children}</div>
       </main>
     </div>
     </AuthGate>

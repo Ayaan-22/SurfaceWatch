@@ -8,10 +8,13 @@ It is designed for small companies, cybersecurity interns, and portfolio use. De
 
 - FastAPI backend with JWT authentication, password hashing, project CRUD, ownership checks, and domain safety validation.
 - PostgreSQL schema for users, projects, assets, scans, logs, findings, ports, SSL/TLS, security headers, technologies, changes, reports, notifications, and scheduled monitoring.
-- Scanner modules for passive seed discovery, DNS resolution, HTTP probing, SSL checks, header analysis, safe/aggressive TCP port profiles, technology fingerprinting, web exposure checks, risk scoring, and change descriptions.
+- Scanner modules for multi-source discovery with source health, aggressive DNS enrichment, DNS safety validation, root and alternate-port HTTP probing, invalid-certificate recovery, weak-header/CORS/cookie analysis, concurrent safe/aggressive TCP profiles, richer technology fingerprinting, secret/backup/diagnostic exposure checks, risk scoring, and change descriptions.
+- Immutable per-scan target manifests preserve complete historical HTTP, TLS, port, header, technology, exposure, finding, and error observations across rescans.
+- Honest coverage telemetry distinguishes discovered, processed, failed, skipped, blocked, partial, and completed work; timeouts and source failures are never presented as clean completions.
+- Atomic worker claiming and an autonomous scheduler prevent duplicate production execution while revalidating authorization immediately before each scan.
 - Next.js dashboard with dark cybersecurity SaaS styling, risk metrics, charts, findings, assets, scans, reports, notifications, and ethical-use messaging.
 - Demo seed data so the dashboard looks useful before scanning real authorized assets.
-- Docker Compose for PostgreSQL, Redis, backend, and frontend.
+- Docker Compose for PostgreSQL, Redis, the API, a dedicated claiming worker, the autonomous scheduler, the frontend, and persistent generated reports.
 
 ## Screenshots
 
@@ -24,8 +27,10 @@ flowchart LR
   User["User"] --> Frontend["Next.js Frontend"]
   Frontend --> API["FastAPI REST API"]
   API --> DB["PostgreSQL"]
-  API --> Redis["Redis"]
-  API --> Scanner["Safe Scanner Engine"]
+  API --> Queue["Database Scan Queue"]
+  Scheduler["Scheduler"] --> Queue
+  Queue --> Worker["Claiming Worker"]
+  Worker --> Scanner["Bounded Scanner Engine"]
   Scanner --> PublicDNS["DNS and CT Sources"]
   Scanner --> PublicWeb["Authorized Public Hosts"]
   API --> Reports["PDF and Excel Reports"]
@@ -140,16 +145,17 @@ $ports | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
 
 ```bash
 cd backend
-python -m app.cli scan example.com
-python -m app.cli ssl example.com
-python -m app.cli ports example.com --ports 80,443,8080
+python -m app.cli scan example.com --authorized
+python -m app.cli scan example.com --aggressive --max-assets 500 --authorized
+python -m app.cli ssl example.com --authorized
+python -m app.cli ports example.com --ports 80,443,8080 --authorized
 ```
 
-Only run these commands against domains you own or are authorized to assess.
+Outbound CLI commands require `--authorized` and must only be used against domains you own or are explicitly authorized to assess.
 
 ## Safety And Authorization Policy
 
-SurfaceWatch must only be used for assets owned by the user or covered by explicit authorization. Default checks are passive-first, low concurrency, time-limited, and non-exploitative. Aggressive checks must be explicitly selected for an authorized project and add broader port coverage plus safe HTTP probes for common public exposure mistakes such as exposed environment files, VCS metadata, backup archives, database dumps, directory listings, diagnostic pages, and server-status pages. Internal and localhost targets are blocked by default unless `ALLOW_INTERNAL_TARGETS=true` is set for development.
+SurfaceWatch must only be used for assets owned by the user or covered by explicit authorization. Default checks are passive-first, bounded, time-limited, and non-exploitative. Aggressive checks must be explicitly selected for an authorized project and add common-name DNS enrichment, broader service coverage, alternate web ports, and safe HTTP probes for common public exposure mistakes such as exposed secrets, VCS metadata, backup archives, database dumps, API specifications, directory listings, metrics, profiling, and diagnostic pages. Internal and localhost targets are blocked by default unless `ALLOW_INTERNAL_TARGETS=true` is set for development. Authorization scope and expiry are revalidated when queued, retried, or scheduled work actually begins.
 
 ## Skills Demonstrated
 
@@ -167,4 +173,4 @@ SurfaceWatch must only be used for assets owned by the user or covered by explic
 
 ## Current Phase
 
-SurfaceWatch now includes API-backed auth, project management, safe manual scans, assets/findings/scans, scan logs, change timelines, notifications, PDF/Excel reports, finding notes, scheduled job records, audit logs, auth throttling, and scan cancel/retry controls. Remaining work is mostly production hardening: persistent distributed queues, email/webhook delivery, richer team administration, more scanner source integrations, and broader automated tests.
+SurfaceWatch now includes API-backed auth, project management, authorization-scoped safe/aggressive scans, atomic database-backed workers with execution leases and heartbeats, crash recovery, autonomous scheduling, immutable result history, coverage diagnostics, assets/findings/scans, scan logs, change timelines, notifications, complete scan-scoped PDF/Excel reports, finding notes, audit logs, auth throttling, and scan cancel/retry controls. Natural next production extensions are email/webhook delivery, organization/team administration, authenticated commercial discovery sources, and horizontally scalable object storage for generated reports.

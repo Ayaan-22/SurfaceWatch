@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -9,6 +9,7 @@ from app.models.mixins import TimestampMixin, UUIDMixin
 
 class ScheduledJob(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "scheduled_jobs"
+    __table_args__ = (UniqueConstraint("project_id", "job_type", name="uq_scheduled_job_project_type"),)
 
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     job_type: Mapped[str] = mapped_column(String(64), default="scan", nullable=False)

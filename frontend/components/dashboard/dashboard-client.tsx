@@ -192,7 +192,7 @@ export function DashboardClient() {
                   <p className="text-sm text-slate-400">{scan.started_at ? formatApiDateTime(scan.started_at) : "Queued"}</p>
                 </div>
                 <div className="text-right">
-                  <Badge tone={scan.status === "failed" ? "high" : "low"}>{scan.status}</Badge>
+                  <Badge tone={scan.status === "failed" ? "high" : scan.status === "partial" ? "medium" : ["queued", "pending", "claimed", "running"].includes(scan.status) ? "info" : "low"}>{scan.status}</Badge>
                   <p className="mt-2 text-xs text-slate-500">Scan risk {scan.risk_score}</p>
                 </div>
               </div>

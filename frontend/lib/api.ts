@@ -27,13 +27,48 @@ export type Scan = {
   status: string;
   trigger: string;
   scan_profile: string;
+  assets_discovered: number;
   assets_scanned: number;
+  assets_failed: number;
   findings_created: number;
+  checks_completed: number;
+  checks_failed: number;
+  coverage_percent: number;
+  attempt_count: number;
+  heartbeat_at: string | null;
+  partial_reason: string | null;
+  discovery_metadata: Record<string, unknown> | unknown[] | null;
   risk_score: number;
   error_message?: string | null;
   created_at: string;
   started_at?: string | null;
   finished_at?: string | null;
+};
+
+export type ScanAssetResult = {
+  id: string;
+  project_id: string;
+  scan_id: string;
+  asset_id: string | null;
+  hostname: string;
+  ip_addresses: string[];
+  source: string | null;
+  discovery_status: string;
+  scan_status: string;
+  risk_level: string;
+  checks: Record<string, unknown>;
+  http_observations: unknown[];
+  tls_observations: unknown[];
+  port_observations: unknown[];
+  header_observations: unknown[];
+  technology_observations: unknown[];
+  exposure_observations: unknown[];
+  finding_observations: unknown[];
+  errors: unknown[];
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type Asset = {
@@ -118,6 +153,9 @@ export type Notification = {
 export type Report = {
   id: string;
   project_id: string;
+  scan_id?: string | null;
+  scan_profile?: string | null;
+  scan_date?: string | null;
   report_type: string;
   status: string;
   file_path?: string | null;

@@ -30,6 +30,7 @@ class Asset(UUIDMixin, TimestampMixin, Base):
     security_headers = relationship("SecurityHeader", back_populates="asset", cascade="all, delete-orphan")
     technologies = relationship("Technology", back_populates="asset", cascade="all, delete-orphan")
     findings = relationship("Finding", back_populates="asset")
+    scan_results = relationship("ScanAssetResult", back_populates="asset")
 
 
 class Port(UUIDMixin, TimestampMixin, Base):

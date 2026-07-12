@@ -48,7 +48,7 @@ export function ProjectForm() {
   }
 
   return (
-    <Card className="max-w-3xl">
+    <Card className="w-full">
       <form onSubmit={onSubmit} className="space-y-5">
         <div className="grid gap-5 md:grid-cols-2">
           <label className="space-y-2 text-sm">

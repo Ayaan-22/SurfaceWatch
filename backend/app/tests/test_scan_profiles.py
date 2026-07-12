@@ -112,3 +112,38 @@ def test_start_scan_defaults_to_safe_profile(monkeypatch) -> None:
 
         assert response.status_code == 202
         assert response.json()["scan_profile"] == "safe"
+
+
+def test_queued_manual_scan_can_be_cancelled_before_worker_starts(monkeypatch) -> None:
+    monkeypatch.setattr("app.routes.scans._run_scan_task", lambda scan_id: None)
+    with _client() as client:
+        headers = _auth_headers(client)
+        project_id = _project_id(client, headers)
+
+        start_response = client.post(f"/api/v1/projects/{project_id}/scans", headers=headers)
+        assert start_response.status_code == 202
+        queued_scan = start_response.json()
+        assert queued_scan["status"] == "queued"
+        assert queued_scan["started_at"] is None
+
+        cancel_response = client.post(f"/api/v1/scans/{queued_scan['id']}/cancel", headers=headers)
+
+        assert cancel_response.status_code == 200
+        cancelled_scan = cancel_response.json()
+        assert cancelled_scan["status"] == "cancelled"
+        assert cancelled_scan["started_at"] is None
+        assert cancelled_scan["finished_at"] is not None
+
+
+def test_project_rejects_overlapping_active_scans(monkeypatch) -> None:
+    monkeypatch.setattr("app.routes.scans._run_scan_task", lambda scan_id: None)
+    with _client() as client:
+        headers = _auth_headers(client)
+        project_id = _project_id(client, headers)
+
+        first = client.post(f"/api/v1/projects/{project_id}/scans", headers=headers)
+        second = client.post(f"/api/v1/projects/{project_id}/scans", headers=headers)
+
+        assert first.status_code == 202
+        assert second.status_code == 409
+        assert first.json()["id"] in second.json()["detail"]

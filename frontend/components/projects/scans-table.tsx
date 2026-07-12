@@ -51,7 +51,7 @@ export function ScansTable({ projectId }: { projectId?: string }) {
                 <td className="py-4 pr-4 font-medium text-white"><Link className="text-cyan-100 hover:text-cyan-200" href={`/scans/${scan.id}`}>{scan.id}</Link></td>
                 <td className="py-4 pr-4">{scan.started}</td>
                 <td className="py-4 pr-4">{scan.duration}</td>
-                <td className="py-4 pr-4"><Badge tone={scan.status === "failed" ? "high" : "low"}>{scan.status}</Badge></td>
+                <td className="py-4 pr-4"><Badge tone={scan.status === "failed" ? "high" : scan.status === "partial" ? "medium" : ["queued", "pending", "claimed", "running"].includes(scan.status) ? "info" : "low"}>{scan.status}</Badge></td>
                 <td className="py-4 pr-4 capitalize">{scan.profile}</td>
                 <td className="py-4 pr-4">{scan.assets}</td>
                 <td className="py-4 pr-4">{scan.findings}</td>

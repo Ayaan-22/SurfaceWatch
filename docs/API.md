@@ -25,12 +25,15 @@ Project creation requires `authorization_confirmed=true`. Domains are normalized
 - `POST /projects/{project_id}/scans`
 - `GET /projects/{project_id}/scans`
 - `GET /scans/{scan_id}`
+- `GET /scans/{scan_id}/results`
 - `GET /scans/{scan_id}/logs`
 - `GET /scans/{scan_id}/changes`
 - `POST /scans/{scan_id}/cancel`
 - `POST /scans/{scan_id}/retry`
 
-Manual scans are queued with FastAPI background tasks and use conservative scanner defaults.
+Manual scans are queued for an exactly-once runner. Development can use the inline runner; production uses the database-backed worker. A project cannot have overlapping active scans. Authorization is revalidated when queued work begins, including retries and scheduled scans.
+
+`GET /scans/{scan_id}/results` returns immutable per-target manifests containing DNS addresses, check outcomes, HTTP, TLS, port, header, technology and exposure observations, finding snapshots, and errors. Scan summaries expose discovered/processed/failed target counts, completed/failed check counts, coverage percentage, discovery-source health, and a partial reason. Terminal statuses are `completed`, `partial`, `cancelled`, and `failed`; incomplete work is never relabeled as a successful completion.
 
 ## Assets And Findings
 
@@ -48,6 +51,8 @@ Manual scans are queued with FastAPI background tasks and use conservative scann
 - `GET /projects/{project_id}/schedule`
 - `PATCH /projects/{project_id}/schedule`
 - `POST /scheduled-jobs/run-due` admin only
+
+The production scheduler service enqueues due jobs autonomously. The admin endpoint uses the same atomic dispatcher for manual operations.
 
 ## Audit Logs
 

@@ -16,3 +16,14 @@ class Report(UUIDMixin, TimestampMixin, Base):
     error_message: Mapped[str | None] = mapped_column(Text)
 
     project = relationship("Project", back_populates="reports")
+    scan = relationship("Scan", back_populates="reports")
+
+    @property
+    def scan_profile(self) -> str | None:
+        return self.scan.scan_profile if self.scan is not None else None
+
+    @property
+    def scan_date(self):
+        if self.scan is None:
+            return None
+        return self.scan.finished_at or self.scan.started_at or self.scan.created_at

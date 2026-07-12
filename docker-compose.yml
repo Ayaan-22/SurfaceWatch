@@ -1,3 +1,24 @@
+x-scanner-environment: &scanner-environment
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  DATABASE_URL: postgresql+psycopg://surfacewatch:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/surfacewatch
+  REDIS_URL: redis://redis:6379/0
+  SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY}
+  JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+  CORS_ORIGINS: ${CORS_ORIGINS:?Set CORS_ORIGINS}
+  ALLOW_INTERNAL_TARGETS: "false"
+  INLINE_SCAN_RUNNER: "false"
+  SCAN_TIMEOUT_SECONDS: ${SCAN_TIMEOUT_SECONDS:-3}
+  DISCOVERY_TIMEOUT_SECONDS: ${DISCOVERY_TIMEOUT_SECONDS:-10}
+  SCAN_CONCURRENCY: ${SCAN_CONCURRENCY:-5}
+  PORT_SCAN_CONCURRENCY: ${PORT_SCAN_CONCURRENCY:-20}
+  ASSET_TIMEOUT_SECONDS: ${ASSET_TIMEOUT_SECONDS:-45}
+  AGGRESSIVE_ASSET_TIMEOUT_SECONDS: ${AGGRESSIVE_ASSET_TIMEOUT_SECONDS:-120}
+  MAX_HTTP_BODY_BYTES: ${MAX_HTTP_BODY_BYTES:-65536}
+  MAX_EXPOSURE_ENDPOINTS: ${MAX_EXPOSURE_ENDPOINTS:-12}
+  MAX_SCAN_DURATION_SECONDS: ${MAX_SCAN_DURATION_SECONDS:-600}
+  MAX_DISCOVERED_ASSETS: ${MAX_DISCOVERED_ASSETS:-250}
+  AGGRESSIVE_MAX_DISCOVERED_ASSETS: ${AGGRESSIVE_MAX_DISCOVERED_ASSETS:-500}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -23,16 +44,14 @@ services:
 
   backend:
     build: ./backend
+    restart: unless-stopped
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     environment:
-      ENVIRONMENT: ${ENVIRONMENT:-production}
-      DATABASE_URL: postgresql+psycopg://surfacewatch:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/surfacewatch
-      REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY}
-      CORS_ORIGINS: ${CORS_ORIGINS:?Set CORS_ORIGINS}
-      ALLOW_INTERNAL_TARGETS: "false"
-      INLINE_SCAN_RUNNER: "false"
+      <<: *scanner-environment
     ports:
       - "8000:8000"
+    volumes:
+      - generated_reports:/app/generated_reports
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,17 +65,24 @@ services:
 
   worker:
     build: ./backend
+    restart: unless-stopped
     command: ["python", "-m", "app.cli", "scan-worker"]
     environment:
-      ENVIRONMENT: ${ENVIRONMENT:-production}
-      DATABASE_URL: postgresql+psycopg://surfacewatch:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/surfacewatch
-      REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY}
-      CORS_ORIGINS: ${CORS_ORIGINS:?Set CORS_ORIGINS}
-      ALLOW_INTERNAL_TARGETS: "false"
-      INLINE_SCAN_RUNNER: "false"
+      <<: *scanner-environment
     depends_on:
-      postgres:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    build: ./backend
+    restart: unless-stopped
+    command: ["python", "-m", "app.cli", "scheduler", "--poll-interval", "30"]
+    environment:
+      <<: *scanner-environment
+    depends_on:
+      backend:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -73,3 +99,4 @@ services:
 
 volumes:
   postgres_data:
+  generated_reports:

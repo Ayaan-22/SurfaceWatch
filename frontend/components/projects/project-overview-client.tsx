@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { PageLoader } from "@/components/ui/page-loader";
 import Link from "next/link";
 import { apiFetch, formatApiDate, formatApiDateTime, parseApiDate, type Project, type Scan } from "@/lib/api";
+import { getAggressiveScanDisabledReason } from "@/lib/scan-authorization";
 
 export function ProjectOverviewClient({ projectId }: { projectId: string }) {
   const [project, setProject] = useState<Project | null>(null);
@@ -50,7 +51,7 @@ export function ProjectOverviewClient({ projectId }: { projectId: string }) {
 
     const intervalId = setInterval(() => {
       const currentScans = scansRef.current;
-      const anyRunning = currentScans.some((s) => s.status === "running" || s.status === "queued");
+      const anyRunning = currentScans.some((s) => ["queued", "pending", "claimed", "running"].includes(s.status));
       if (!anyRunning && currentScans.length > 0) return;
       load();
     }, 3000);
@@ -84,8 +85,15 @@ export function ProjectOverviewClient({ projectId }: { projectId: string }) {
   if (!project) return null;
 
   const authorizationExpired = project.authorization_expires_at ? parseApiDate(project.authorization_expires_at).getTime() <= nowMs : true;
-  const canRunAggressive = project.max_scan_profile === "aggressive" && !authorizationExpired;
+  const authorizationDisabledReason = !project.authorization_expires_at
+    ? "Authorization expiry is missing."
+    : authorizationExpired
+      ? `Authorization expired on ${formatApiDate(project.authorization_expires_at)}.`
+      : null;
+  const aggressiveDisabledReason = getAggressiveScanDisabledReason(project, nowMs);
+  const canRunAggressive = aggressiveDisabledReason === null;
   const canRunSafe = !authorizationExpired;
+  const scopeSettingsHref = `/projects/${project.id}/settings`;
 
   return (
     <div className="space-y-5">
@@ -95,17 +103,31 @@ export function ProjectOverviewClient({ projectId }: { projectId: string }) {
           <h1 className="text-3xl font-semibold text-white">{project.company_name}</h1>
           <p className="mt-2 text-slate-400">{project.main_domain}</p>
         </div>
-        <div className="flex flex-wrap gap-3">
-          <Button href={`/projects/${project.id}/assets`} variant="secondary">Assets</Button>
-          <Button href={`/projects/${project.id}/findings`} variant="secondary">Findings</Button>
-          <button disabled={scanning !== null || !canRunSafe} onClick={() => startScan("safe")} className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-cyan-300 px-4 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-60">
-            {scanning === "safe" ? <RefreshCw className="animate-spin" size={17} /> : <Play size={17} />}
-            {scanning === "safe" ? "Queueing..." : "Run safe scan"}
-          </button>
-          <button disabled={scanning !== null || !canRunAggressive} onClick={() => startScan("aggressive")} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-red-300/50 bg-red-500/15 px-4 text-sm font-semibold text-red-100 transition hover:bg-red-500/25 disabled:cursor-not-allowed disabled:opacity-60">
-            {scanning === "aggressive" ? <RefreshCw className="animate-spin" size={17} /> : <ShieldAlert size={17} />}
-            {scanning === "aggressive" ? "Queueing..." : "Run aggressive scan"}
-          </button>
+        <div className="flex max-w-xl flex-col items-start gap-3 sm:items-end">
+          <div className="flex flex-wrap justify-start gap-3 sm:justify-end">
+            <Button href={`/projects/${project.id}/assets`} variant="secondary">Assets</Button>
+            <Button href={`/projects/${project.id}/findings`} variant="secondary">Findings</Button>
+            <button disabled={scanning !== null || !canRunSafe} onClick={() => startScan("safe")} className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-cyan-300 px-4 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-60">
+              {scanning === "safe" ? <RefreshCw className="animate-spin" size={17} /> : <Play size={17} />}
+              {scanning === "safe" ? "Queueing..." : "Run safe scan"}
+            </button>
+            <button
+              aria-describedby={aggressiveDisabledReason ? "aggressive-scan-disabled-reason" : undefined}
+              disabled={scanning !== null || !canRunAggressive}
+              onClick={() => startScan("aggressive")}
+              title={aggressiveDisabledReason ?? undefined}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-red-300/50 bg-red-500/15 px-4 text-sm font-semibold text-red-100 transition hover:bg-red-500/25 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {scanning === "aggressive" ? <RefreshCw className="animate-spin" size={17} /> : <ShieldAlert size={17} />}
+              {scanning === "aggressive" ? "Queueing..." : "Run aggressive scan"}
+            </button>
+          </div>
+          {aggressiveDisabledReason ? (
+            <div id="aggressive-scan-disabled-reason" className="flex w-full flex-col gap-3 rounded-md border border-amber-300/30 bg-amber-400/10 p-3 text-sm text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+              <p>{aggressiveDisabledReason}</p>
+              <Button href={scopeSettingsHref} variant="secondary" className="shrink-0">Update project scope</Button>
+            </div>
+          ) : null}
         </div>
       </div>
       {error ? <p className="rounded-md border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</p> : null}
@@ -142,7 +164,12 @@ export function ProjectOverviewClient({ projectId }: { projectId: string }) {
             <p className="mt-2 font-medium capitalize text-white">{project.max_scan_profile}</p>
           </div>
         </div>
-        {authorizationExpired ? <p className="mt-4 rounded-md border border-amber-300/30 bg-amber-400/10 p-3 text-sm text-amber-100">Authorization is expired or missing. Renew the scope before starting new scans.</p> : null}
+        {authorizationDisabledReason ? (
+          <div className="mt-4 flex flex-col gap-3 rounded-md border border-amber-300/30 bg-amber-400/10 p-3 text-sm text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+            <p>{authorizationDisabledReason} Update the project scope before starting new scans.</p>
+            <Button href={scopeSettingsHref} variant="secondary" className="shrink-0">Update project scope</Button>
+          </div>
+        ) : null}
       </Card>
       <Card>
         <div className="mb-4 flex items-center justify-between">
@@ -161,12 +188,12 @@ export function ProjectOverviewClient({ projectId }: { projectId: string }) {
                 <p className="text-sm text-slate-400">{scan.started_at ? formatApiDateTime(scan.started_at) : "Queued"} · {scan.scan_profile}</p>
               </div>
               <div className="text-right">
-                <Badge tone={scan.status === "failed" ? "high" : "low"}>{scan.status}</Badge>
+                <Badge tone={scan.status === "failed" ? "high" : scan.status === "partial" ? "medium" : ["queued", "pending", "claimed", "running"].includes(scan.status) ? "info" : "low"}>{scan.status}</Badge>
                 <p className="mt-2 text-xs text-slate-500">Scan risk {scan.risk_score}</p>
               </div>
             </div>
           ))}
-          {!scans.length ? <p className="text-slate-400">No scans yet. Run a safe or aggressive scan to populate assets and findings.</p> : null}
+          {!scans.length ? <p className="text-slate-400">No scans yet. Run an approved scan to populate assets and findings.</p> : null}
         </div>
       </Card>
     </div>

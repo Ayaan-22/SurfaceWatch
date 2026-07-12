@@ -16,22 +16,27 @@ class Settings(BaseModel):
     redis_url: str = "redis://redis:6379/0"
 
     secret_key: str = Field(
-        default="change-me-in-production",
+        default="development-only-change-me-32-bytes",
         min_length=16,
         description="JWT signing secret. Override in production.",
     )
     access_token_expire_minutes: int = 60 * 8
-    algorithm: str = "HS256"
+    algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
 
     cors_origins: list[str] = ["http://localhost:3000"]
     allow_internal_targets: bool = False
-    scan_timeout_seconds: float = 3.0
-    discovery_timeout_seconds: float = 10.0
-    scan_concurrency: int = 5
+    scan_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
+    discovery_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    scan_concurrency: int = Field(default=5, ge=1, le=50)
+    port_scan_concurrency: int = Field(default=20, ge=1, le=100)
+    asset_timeout_seconds: int = Field(default=45, ge=10, le=600)
+    aggressive_asset_timeout_seconds: int = Field(default=120, ge=30, le=900)
+    max_http_body_bytes: int = Field(default=65536, ge=4096, le=1048576)
+    max_exposure_endpoints: int = Field(default=12, ge=1, le=50)
     inline_scan_runner: bool = True
-    max_discovered_assets: int = 250
-    max_scan_duration_seconds: int = 600
-    aggressive_max_discovered_assets: int = 500
+    max_discovered_assets: int = Field(default=250, ge=1, le=5000)
+    max_scan_duration_seconds: int = Field(default=600, ge=60, le=86400)
+    aggressive_max_discovered_assets: int = Field(default=500, ge=1, le=10000)
     default_ports: list[int] = [
         80,
         443,
@@ -56,7 +61,11 @@ class Settings(BaseModel):
         25,
         53,
         80,
+        81,
         110,
+        111,
+        135,
+        139,
         143,
         389,
         443,
@@ -67,24 +76,45 @@ class Settings(BaseModel):
         995,
         1433,
         1521,
+        1883,
         2049,
+        2181,
         2375,
         2376,
+        2379,
+        2380,
         3000,
+        3128,
         3306,
+        3389,
+        4443,
         5000,
         5432,
         5601,
+        5672,
         5900,
         5984,
         6379,
+        6443,
+        7001,
+        7002,
         8000,
         8080,
+        8081,
         8443,
+        8500,
+        8888,
         9000,
+        9090,
         9200,
         9300,
+        9418,
+        9443,
+        10000,
+        10250,
+        10255,
         11211,
+        15672,
         27017,
         27018,
     ]
@@ -97,7 +127,11 @@ def _validate_settings(settings: Settings) -> None:
     errors: list[str] = []
     if settings.debug:
         errors.append("DEBUG must be false")
-    if settings.secret_key in {"change-me-in-production", "change-this-to-a-long-random-secret"} or len(settings.secret_key) < 32:
+    if settings.secret_key in {
+        "change-me-in-production",
+        "change-this-to-a-long-random-secret",
+        "development-only-change-me-32-bytes",
+    } or len(settings.secret_key) < 32:
         errors.append("SECRET_KEY must be a long random value")
     if settings.database_url.startswith("sqlite"):
         errors.append("DATABASE_URL must not use SQLite")
@@ -148,7 +182,7 @@ def get_settings() -> Settings:
         api_prefix=os.getenv("API_PREFIX", "/api/v1"),
         database_url=os.getenv("DATABASE_URL", "sqlite:///./surfacewatch.db"),
         redis_url=os.getenv("REDIS_URL", "redis://redis:6379/0"),
-        secret_key=os.getenv("SECRET_KEY", "change-me-in-production"),
+        secret_key=os.getenv("SECRET_KEY", "development-only-change-me-32-bytes"),
         access_token_expire_minutes=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 8))),
         algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
         cors_origins=cors_origins,
@@ -156,6 +190,11 @@ def get_settings() -> Settings:
         scan_timeout_seconds=float(os.getenv("SCAN_TIMEOUT_SECONDS", "3.0")),
         discovery_timeout_seconds=float(os.getenv("DISCOVERY_TIMEOUT_SECONDS", "10.0")),
         scan_concurrency=int(os.getenv("SCAN_CONCURRENCY", "5")),
+        port_scan_concurrency=int(os.getenv("PORT_SCAN_CONCURRENCY", "20")),
+        asset_timeout_seconds=int(os.getenv("ASSET_TIMEOUT_SECONDS", "45")),
+        aggressive_asset_timeout_seconds=int(os.getenv("AGGRESSIVE_ASSET_TIMEOUT_SECONDS", "120")),
+        max_http_body_bytes=int(os.getenv("MAX_HTTP_BODY_BYTES", "65536")),
+        max_exposure_endpoints=int(os.getenv("MAX_EXPOSURE_ENDPOINTS", "12")),
         inline_scan_runner=os.getenv("INLINE_SCAN_RUNNER", "true").lower() == "true",
         max_discovered_assets=int(os.getenv("MAX_DISCOVERED_ASSETS", "250")),
         max_scan_duration_seconds=int(os.getenv("MAX_SCAN_DURATION_SECONDS", "600")),

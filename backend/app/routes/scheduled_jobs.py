@@ -1,12 +1,10 @@
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from app.database import SessionLocal
-from app.models import Scan, ScheduledJob
+from app.models import ScheduledJob
 from app.models.mixins import utc_now
 from app.routes.deps import CurrentUser, DbSession, get_owned_project
-from app.routes.scans import _run_scan_task
-from app.scanner.scheduler import next_run
+from app.scanner.scheduler import enqueue_due_scans, next_run
 from app.schemas.scheduled_job import ScheduledJobRead, ScheduledJobUpdate
 from app.services.audit import record_audit
 
@@ -54,26 +52,11 @@ def update_project_schedule(
 
 
 @router.post("/scheduled-jobs/run-due", response_model=list[ScheduledJobRead])
-def run_due_jobs(background_tasks: BackgroundTasks, db: DbSession, current_user: CurrentUser) -> list[ScheduledJob]:
+def run_due_jobs(db: DbSession, current_user: CurrentUser) -> list[ScheduledJob]:
     if current_user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required.")
     now = utc_now()
-    jobs = list(
-        db.scalars(
-            select(ScheduledJob).where(
-                ScheduledJob.status == "active",
-                ScheduledJob.next_run_at.is_not(None),
-                ScheduledJob.next_run_at <= now,
-            )
-        )
-    )
-    for job in jobs:
-        scan = Scan(project_id=job.project_id, status="pending", trigger="scheduled", scan_profile="safe")
-        db.add(scan)
-        db.flush()
-        job.last_run_at = now
-        job.next_run_at = next_run(job.frequency, now)
-        background_tasks.add_task(_run_scan_task, scan.id)
+    jobs = enqueue_due_scans(db, now)
     record_audit(db, "scheduled_jobs.run_due", current_user.id, metadata={"count": len(jobs)})
     db.commit()
     return jobs
